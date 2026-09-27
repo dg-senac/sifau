@@ -78,7 +78,7 @@ function getAuthErrorMessage(error: AuthErrorDetails) {
   return 'Não foi possível concluir a solicitação. Tente novamente.';
 }
 
-export function AuthScreen() {
+export function AuthScreen({ onAdmin }: { onAdmin?: () => void } = {}) {
   const [mode, setMode] = useState<'login' | 'signup'>('login');
   const [form, setForm] = useState({
     nome: '',
@@ -118,13 +118,19 @@ export function AuthScreen() {
     setBusy(true);
     try {
       if (mode === 'login') {
-        const { error } = await supabase.auth.signInWithPassword({
+        const { data, error } = await supabase.auth.signInWithPassword({
           email,
           password: form.senha,
         });
         if (error) {
           logAuthError('login', error, [email, form.senha]);
           setMessage(getAuthErrorMessage(error));
+        } else if (data.user) {
+          // Verificar se é administrador
+          const { data: isAdmin } = await supabase.rpc('is_admin');
+          if (isAdmin && onAdmin) {
+            onAdmin();
+          }
         }
         return;
       }
@@ -147,17 +153,28 @@ export function AuthScreen() {
       } else if (!data.user) {
         setMessage('Não foi possível confirmar a criação da conta. Tente novamente.');
       } else if (data.session) {
-        const { data: profile, error: profileError } = await supabase
+        // Usuário já está autenticado (sem confirmação de email) - criar perfil manualmente
+        const { error: fiscalError } = await supabase
           .from('fiscais')
-          .select('id')
-          .eq('id', data.user.id)
-          .maybeSingle();
-        if (profileError || !profile) {
-          if (profileError) logAuthError('verificação do perfil', profileError, [email, form.senha]);
-          setMessage('A conta foi criada, mas o perfil fiscal não foi confirmado. Procure o suporte antes de tentar novo cadastro.');
+          .insert({
+            id: data.user.id,
+            email: data.user.email || email,
+            nome: form.nome.trim(),
+            telefone: form.telefone.trim(),
+            bairro: form.bairro.trim(),
+            especialidade: form.especialidade.trim() || null,
+            ativo: true,
+          });
+
+        if (fiscalError) {
+          logAuthError('criação do perfil fiscal', fiscalError, [email, form.senha]);
+          setMessage('A conta foi criada, mas houve um erro ao criar seu perfil fiscal. Tente entrar ou procure o suporte.');
+        } else {
+          setMessage('✅ Conta criada com sucesso! Seu cadastro já está ativo.');
         }
       } else {
-        setMessage('Cadastro criado. Verifique seu e-mail e confirme o endereço para poder entrar no SIFAU.');
+        // Usuário precisa confirmar email - o trigger do backend deve criar o perfil
+        setMessage('📧 Enviamos um link de confirmação para ' + email + '. Acesse seu e-mail e clique no link para ativar sua conta.');
       }
     } catch (error) {
       logAuthError(mode === 'login' ? 'login' : 'cadastro', error, [email, form.senha]);

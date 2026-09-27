@@ -148,4 +148,5 @@ export type Screen =
   | 'more'
   | 'profile'
   | 'notifications'
-  | 'map';
+  | 'map'
+  | 'admin';

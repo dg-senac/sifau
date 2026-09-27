@@ -243,8 +243,15 @@ function OrderDetail({ order, fiscal, onClose }: { order: OrdemServico; fiscal: 
   }, []);
 
   useEffect(() => {
-    supabase.from('vistorias').select('*').eq('ocorrencia_id', order.ocorrencia_id ?? '').then(({ data }) => setVistorias(data ?? []));
-    supabase.from('autos_infracao').select('*').eq('os_id', order.id).then(({ data }) => setAutos(data ?? []));
+    const fetchOrderData = async () => {
+      const { data: vistoriasData } = await supabase.from('vistorias').select('*').eq('ocorrencia_id', order.ocorrencia_id ?? '');
+      setVistorias(vistoriasData ?? []);
+
+      const { data: autosData } = await supabase.from('autos_infracao').select('*').eq('os_id', order.id);
+      setAutos(autosData ?? []);
+    };
+
+    fetchOrderData();
   }, [order]);
 
   const checkProximity = () => {

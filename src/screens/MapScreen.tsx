@@ -23,17 +23,20 @@ export function MapScreen() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    supabase
-      .from('ocorrencias')
-      .select('*')
-      .not('latitude', 'is', null)
-      .not('longitude', 'is', null)
-      .order('created_at', { ascending: false })
-      .limit(150)
-      .then(({ data }) => {
-        setItems(data ?? []);
-        setLoading(false);
-      });
+    const fetchOccurrences = async () => {
+      const { data } = await supabase
+        .from('ocorrencias')
+        .select('*')
+        .not('latitude', 'is', null)
+        .not('longitude', 'is', null)
+        .order('created_at', { ascending: false })
+        .limit(150);
+
+      setItems(data ?? []);
+      setLoading(false);
+    };
+
+    fetchOccurrences();
   }, []);
 
   useEffect(() => {

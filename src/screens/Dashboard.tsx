@@ -19,28 +19,29 @@ export function Dashboard() {
   const [escalated, setEscalated] = useState<number>(0);
 
   useEffect(() => {
-    Promise.all([
-      supabase.from('ocorrencias').select('id', { count: 'exact', head: true }),
-      supabase
-        .from('ocorrencias')
-        .select('id', { count: 'exact', head: true })
-        .eq('status', 'Resolvida'),
-      supabase
-        .from('ocorrencias')
-        .select('id', { count: 'exact', head: true })
-        .lt('sla_deadline', new Date().toISOString())
-        .not('status', 'in', '(Resolvida,Arquivada)'),
-    ]).then(([total, resolved, overdue]) =>
+    const fetchDashboardData = async () => {
+      const [total, resolved, overdue] = await Promise.all([
+        supabase.from('ocorrencias').select('id', { count: 'exact', head: true }),
+        supabase
+          .from('ocorrencias')
+          .select('id', { count: 'exact', head: true })
+          .eq('status', 'Resolvida'),
+        supabase
+          .from('ocorrencias')
+          .select('id', { count: 'exact', head: true })
+          .lt('sla_deadline', new Date().toISOString())
+          .not('status', 'in', '(Resolvida,Arquivada)'),
+      ]);
+
       setStats({
         total: total.count ?? 0,
         resolved: resolved.count ?? 0,
         overdue: overdue.count ?? 0,
-      }),
-    );
+      });
 
-    supabase.from('ocorrencias').select('categoria').then(({ data }) => {
+      const { data: categoryData } = await supabase.from('ocorrencias').select('categoria');
       const counts: Record<string, number> = {};
-      (data ?? []).forEach((row) => {
+      (categoryData ?? []).forEach((row) => {
         counts[row.categoria] = (counts[row.categoria] ?? 0) + 1;
       });
       const max = Math.max(...Object.values(counts), 1);
@@ -51,75 +52,71 @@ export function Dashboard() {
           pct: Math.round((count / max) * 100),
         })) as { categoria: string; count: number; pct: number }[],
       );
-    });
 
-    supabase.from('ocorrencias').select('status').then(({ data }) => {
-      const counts: Record<string, number> = {};
-      (data ?? []).forEach((row) => {
-        counts[row.status] = (counts[row.status] ?? 0) + 1;
+      const { data: statusData } = await supabase.from('ocorrencias').select('status');
+      const statusCounts: Record<string, number> = {};
+      (statusData ?? []).forEach((row) => {
+        statusCounts[row.status] = (statusCounts[row.status] ?? 0) + 1;
       });
       setByStatus(
         OCCURRENCE_STATUSES.map((status) => ({
           status,
-          count: counts[status] ?? 0,
+          count: statusCounts[status] ?? 0,
         })),
       );
-    });
 
-    supabase
-      .from('ocorrencias')
-      .select('id', { count: 'exact', head: true })
-      .eq('status', 'Escalonada')
-      .then(({ count }) => setEscalated(count ?? 0));
+      const { count: escalatedCount } = await supabase
+        .from('ocorrencias')
+        .select('id', { count: 'exact', head: true })
+        .eq('status', 'Escalonada');
+      setEscalated(escalatedCount ?? 0);
 
-    supabase
-      .from('ocorrencias')
-      .select('fiscal_designado, status')
-      .then(async ({ data }) => {
-        const byFiscal: Record<string, { resolvidas: number; total: number }> = {};
-        (data ?? []).forEach((row) => {
-          if (!row.fiscal_designado) return;
-          if (!byFiscal[row.fiscal_designado]) byFiscal[row.fiscal_designado] = { resolvidas: 0, total: 0 };
-          byFiscal[row.fiscal_designado].total++;
-          if (row.status === 'Resolvida') byFiscal[row.fiscal_designado].resolvidas++;
-        });
-        const ids = Object.keys(byFiscal);
-        if (ids.length === 0) {
-          setFiscalRanking([]);
-          return;
-        }
-        const { data: fiscais } = await supabase.from('fiscais').select('id, nome').in('id', ids);
-        const ranking = (fiscais ?? []).map((f) => ({
-          nome: f.nome,
-          resolvidas: byFiscal[f.id]?.resolvidas ?? 0,
-          compliance: byFiscal[f.id]?.total
-            ? Math.round((byFiscal[f.id].resolvidas / byFiscal[f.id].total) * 100)
-            : 0,
-        }));
-        ranking.sort((a, b) => b.resolvidas - a.resolvidas);
-        setFiscalRanking(ranking);
+      const { data: fiscalData } = await supabase.from('ocorrencias').select('fiscal_designado, status');
+      const byFiscal: Record<string, { resolvidas: number; total: number }> = {};
+      (fiscalData ?? []).forEach((row) => {
+        if (!row.fiscal_designado) return;
+        if (!byFiscal[row.fiscal_designado]) byFiscal[row.fiscal_designado] = { resolvidas: 0, total: 0 };
+        byFiscal[row.fiscal_designado].total++;
+        if (row.status === 'Resolvida') byFiscal[row.fiscal_designado].resolvidas++;
       });
+      const ids = Object.keys(byFiscal);
+      if (ids.length === 0) {
+        setFiscalRanking([]);
+        return;
+      }
+      const { data: fiscais } = await supabase.from('fiscais').select('id, nome').in('id', ids);
+      const ranking = (fiscais ?? []).map((f) => ({
+        nome: f.nome,
+        resolvidas: byFiscal[f.id]?.resolvidas ?? 0,
+        compliance: byFiscal[f.id]?.total
+          ? Math.round((byFiscal[f.id].resolvidas / byFiscal[f.id].total) * 100)
+          : 0,
+      }));
+      ranking.sort((a, b) => b.resolvidas - a.resolvidas);
+      setFiscalRanking(ranking);
+    };
+
+    fetchDashboardData();
   }, []);
 
   const compliance = stats.total ? Math.round((stats.resolved / stats.total) * 100) : 0;
   const maxStatus = Math.max(...byStatus.map((s) => s.count), 1);
 
-  const exportCSV = () => {
-    supabase.from('ocorrencias').select('*').then(({ data }) => {
-      if (!data || data.length === 0) return;
-      const headers = ['id', 'categoria', 'subcategoria', 'descricao', 'status', 'urgencia', 'bairro', 'endereco', 'created_at', 'sla_deadline'];
-      const rows = data.map((row) =>
-        headers.map((h) => `"${String(row[h] ?? '').replace(/"/g, '""')}"`).join(','),
-      );
-      const csv = [headers.join(','), ...rows].join('\n');
-      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `ocorrencias_sifau_${new Date().toISOString().slice(0, 10)}.csv`;
-      a.click();
-      URL.revokeObjectURL(url);
-    });
+  const exportCSV = async () => {
+    const { data } = await supabase.from('ocorrencias').select('*');
+    if (!data || data.length === 0) return;
+    const headers = ['id', 'categoria', 'subcategoria', 'descricao', 'status', 'urgencia', 'bairro', 'endereco', 'created_at', 'sla_deadline'];
+    const rows = data.map((row) =>
+      headers.map((h) => `"${String(row[h] ?? '').replace(/"/g, '""')}"`).join(','),
+    );
+    const csv = [headers.join(','), ...rows].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `ocorrencias_sifau_${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
   return (
