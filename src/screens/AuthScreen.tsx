@@ -1,6 +1,7 @@
 import { FormEvent, useState } from 'react';
 import { AlertTriangle, Loader2, ShieldCheck } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
+import { isAdminCredentials } from '@/config/admin';
 
 type AuthErrorDetails = {
   code?: string;
@@ -118,6 +119,19 @@ export function AuthScreen({ onAdmin }: { onAdmin?: () => void } = {}) {
     setBusy(true);
     try {
       if (mode === 'login') {
+        // Verificar primeiro se são credenciais de admin locais
+        if (isAdminCredentials(email, form.senha)) {
+          if (onAdmin) {
+            onAdmin();
+            setMessage('');
+          } else {
+            setMessage('Acesso de administrador não disponível neste contexto.');
+          }
+          setBusy(false);
+          return;
+        }
+
+        // Se não for admin, fazer login normal no Supabase
         const { data, error } = await supabase.auth.signInWithPassword({
           email,
           password: form.senha,
@@ -126,7 +140,7 @@ export function AuthScreen({ onAdmin }: { onAdmin?: () => void } = {}) {
           logAuthError('login', error, [email, form.senha]);
           setMessage(getAuthErrorMessage(error));
         } else if (data.user) {
-          // Verificar se é administrador
+          // Verificar se é administrador via Supabase (para casos antigos)
           const { data: isAdmin } = await supabase.rpc('is_admin');
           if (isAdmin && onAdmin) {
             onAdmin();

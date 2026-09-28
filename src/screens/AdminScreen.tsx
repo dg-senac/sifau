@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { Fiscal } from '@/lib/types';
+import { ADMIN_CREDENTIALS } from '@/config/admin';
 
 type FiscalWithStatus = Fiscal & {
   is_online: boolean;
@@ -233,10 +234,10 @@ export function AdminScreen() {
     if (!selectedFiscal || (!newMessage.trim() && attachments.length === 0)) return;
 
     const { data: adminData } = await supabase.auth.getUser();
-    if (!adminData.user) return;
+    const adminId = adminData.user?.id || 'local-admin';
 
     const { error } = await supabase.from('admin_messages').insert({
-      admin_id: adminData.user.id,
+      admin_id: adminId,
       fiscal_id: selectedFiscal.id,
       sender_type: 'admin',
       message: newMessage.trim(),
@@ -274,9 +275,9 @@ export function AdminScreen() {
     if (!selectedFiscal) return;
 
     const { data: adminData } = await supabase.auth.getUser();
-    if (!adminData.user) return;
+    const adminId = adminData.user?.id || 'local-admin';
 
-    const expiresAt = banType === 'temporary' 
+    const expiresAt = banType === 'temporary'
       ? new Date(Date.now() + banDuration * 24 * 60 * 60 * 1000).toISOString()
       : null;
 
@@ -284,7 +285,7 @@ export function AdminScreen() {
     const { error: banError } = await supabase.from('banned_users').insert({
       id: selectedFiscal.id,
       fiscal_id: selectedFiscal.id,
-      banned_by: adminData.user.id,
+      banned_by: adminId,
       reason: banReason,
       ban_type: banType,
       expires_at: expiresAt,
@@ -302,7 +303,7 @@ export function AdminScreen() {
 
     // Log da ação
     await supabase.from('admin_logs').insert({
-      admin_id: adminData.user.id,
+      admin_id: adminId,
       action: 'BAN_USER',
       target_type: 'fiscal',
       target_id: selectedFiscal.id,
@@ -321,12 +322,12 @@ export function AdminScreen() {
 
   const unbanUser = async (fiscalId: string) => {
     const { data: adminData } = await supabase.auth.getUser();
-    if (!adminData.user) return;
+    const adminId = adminData.user?.id || 'local-admin';
 
     await supabase.from('banned_users').delete().eq('id', fiscalId);
 
     await supabase.from('admin_logs').insert({
-      admin_id: adminData.user.id,
+      admin_id: adminId,
       action: 'UNBAN_USER',
       target_type: 'fiscal',
       target_id: fiscalId,
@@ -343,8 +344,13 @@ export function AdminScreen() {
   };
 
   const handleLogout = async () => {
-    await supabase.auth.signOut();
-    window.location.reload();
+    // Se for admin local, apenas recarrega a página
+    if (!supabase.auth.getSession()) {
+      window.location.reload();
+    } else {
+      await supabase.auth.signOut();
+      window.location.reload();
+    }
   };
 
   const exportData = async () => {

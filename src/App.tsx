@@ -35,6 +35,7 @@ function App() {
   const [fiscal, setFiscal] = useState<Fiscal | null>(null);
   const [unreadCount, setUnreadCount] = useState(0);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [localAdmin, setLocalAdmin] = useState(false);
 
   const loadFiscal = () => {
     if (!session) {
@@ -174,8 +175,8 @@ function App() {
   }, [fiscal?.id]);
 
   if (loading) return <LoadingScreen message="Carregando SIFAU" />;
-  if (!session) return <AuthScreen onAdmin={() => setScreen('admin')} />;
-  if (isAdmin && screen === 'home') setScreen('admin');
+  if (!session) return <AuthScreen onAdmin={() => { setLocalAdmin(true); setScreen('admin'); }} />;
+  if ((isAdmin || localAdmin) && screen === 'home') setScreen('admin');
 
   const renderScreen = () => {
     switch (screen) {
