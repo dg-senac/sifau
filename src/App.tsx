@@ -143,9 +143,13 @@ function App() {
   }, [fiscal?.id]);
 
   useEffect(() => {
-    if (localStorage.getItem('sifau-open-notifications')) {
-      localStorage.removeItem('sifau-open-notifications');
-      setScreen('notifications');
+    try {
+      if (localStorage.getItem('sifau-open-notifications')) {
+        localStorage.removeItem('sifau-open-notifications');
+        setScreen('notifications');
+      }
+    } catch (e) {
+      console.error('Erro ao acessar localStorage:', e);
     }
   }, [fiscal]);
 
