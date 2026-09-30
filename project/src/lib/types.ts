@@ -93,6 +93,41 @@ export type Notificacao = {
   created_at: string;
 };
 
+export type Documento = {
+  id: string;
+  fiscal_id: string;
+  ocorrencia_id: string | null;
+  vistoria_id: string | null;
+  ordem_servico_id: string | null;
+  tipo_documento: 'foto' | 'assinatura' | 'documento' | 'relatorio' | 'auto_infracao';
+  titulo: string | null;
+  descricao: string | null;
+  arquivo_data: string;
+  arquivo_nome: string | null;
+  arquivo_tipo: string | null;
+  arquivo_tamanho: number | null;
+  ordem: number;
+  metadados: Record<string, any>;
+  criado_em: string;
+  atualizado_em: string;
+};
+
+export type AssinaturaDigital = {
+  id: string;
+  fiscal_id: string;
+  documento_id: string | null;
+  assinatura_data: string;
+  certificado_digital: string | null;
+  certificado_valido: boolean;
+  certificado_emissor: string | null;
+  certificado_validade_inicio: string | null;
+  certificado_validade_fim: string | null;
+  hash_documento: string | null;
+  ip_address: string | null;
+  dispositivo_info: Record<string, any>;
+  criado_em: string;
+};
+
 export const CATEGORIES = [
   'Buraco na via',
   'Iluminação pública',
@@ -137,6 +172,8 @@ export const OS_ORIGINS = ['Preventiva', 'Denúncia', 'Ofício', 'Comunicação 
 export const SCIENCE_TYPES = ['Assinou', 'Recusou', 'Ausente'] as const;
 export const PAYMENT_STATUSES = ['Pendente', 'Pago', 'Cancelado'] as const;
 
+export const DOCUMENT_TYPES = ['foto', 'assinatura', 'documento', 'relatorio', 'auto_infracao'] as const;
+
 export type Screen =
   | 'home'
   | 'new'
@@ -148,4 +185,6 @@ export type Screen =
   | 'more'
   | 'profile'
   | 'notifications'
-  | 'map';
+  | 'map'
+  | 'admin'
+  | 'documents';

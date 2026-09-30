@@ -1,4 +1,4 @@
-import { Bell, ChevronRight, FileCheck2, LogOut, Map, User, Users } from 'lucide-react';
+import { Bell, ChevronRight, FileCheck2, FileText, LogOut, Map, User, Users } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { Fiscal, Screen } from '@/lib/types';
 import { PageTitle } from '@/components/ui';
@@ -16,6 +16,7 @@ export function MoreScreen({
     { id: 'profile', label: 'Meu perfil', desc: 'Dados pessoais e notificações', icon: User },
     { id: 'notifications', label: 'Notificações', desc: 'Atribuições, prazos e status', icon: Bell, badge: unreadCount },
     { id: 'map', label: 'Mapa da cidade', desc: 'Ocorrências geolocalizadas', icon: Map },
+    { id: 'documents', label: 'Documentos', desc: 'Galeria de fotos e arquivos', icon: FileText },
     { id: 'audit', label: 'Auditoria', desc: 'Histórico imutável de ações', icon: FileCheck2 },
     { id: 'users', label: 'Fiscais cadastrados', desc: 'Equipe municipal', icon: Users },
   ];

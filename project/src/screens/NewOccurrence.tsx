@@ -7,7 +7,9 @@ import { CATEGORIES, Fiscal, SUBCATEGORIES, URGENCY_LEVELS } from '@/lib/types';
 import { classifyByText } from '@/lib/classify';
 import { PageTitle } from '@/components/ui';
 import { PhotoUpload } from '@/components/PhotoUpload';
+import { DocumentGallery } from '@/components/DocumentGallery';
 import { enqueue } from '@/lib/offlineQueue';
+import { documentsApi, fileUtils } from '@/lib/documents';
 
 export function NewOccurrence({
   fiscal,
@@ -30,6 +32,7 @@ export function NewOccurrence({
   const [message, setMessage] = useState('');
   const [offline, setOffline] = useState(!navigator.onLine);
   const [photos, setPhotos] = useState<string[]>([]);
+  const [documents, setDocuments] = useState<any[]>([]);
   const [duplicateWarn, setDuplicateWarn] = useState('');
 
   useEffect(() => {
@@ -78,6 +81,47 @@ export function NewOccurrence({
       } else {
         setDuplicateWarn('');
       }
+    }
+  };
+
+  const handleDocumentUpload = async (files: File[]) => {
+    if (!fiscal) return;
+    try {
+      for (const file of files) {
+        const base64 = await fileUtils.fileToBase64(file);
+        
+        const documento = {
+          fiscal_id: fiscal.id,
+          ocorrencia_id: null,
+          vistoria_id: null,
+          ordem_servico_id: null,
+          tipo_documento: file.type.startsWith('image/') ? 'foto' : 'documento',
+          titulo: file.name,
+          descricao: 'Documento da nova ocorrência',
+          arquivo_data: base64,
+          arquivo_nome: file.name,
+          arquivo_tipo: file.type,
+          arquivo_tamanho: file.size,
+          ordem: documents.length,
+          metadados: {
+            uploadDate: new Date().toISOString(),
+          },
+        };
+
+        const createdDoc = await documentsApi.create(documento);
+        setDocuments(prev => [...prev, createdDoc]);
+      }
+    } catch (error) {
+      console.error('Erro ao fazer upload de documento:', error);
+    }
+  };
+
+  const handleDocumentDelete = async (id: string) => {
+    try {
+      await documentsApi.delete(id);
+      setDocuments(prev => prev.filter(d => d.id !== id));
+    } catch (error) {
+      console.error('Erro ao deletar documento:', error);
     }
   };
 
@@ -205,6 +249,17 @@ export function NewOccurrence({
         <div className="form-section">
           <h2>Fotos</h2>
           <PhotoUpload photos={photos} onChange={setPhotos} max={5} label="Anexar fotos" hint="Até 5 imagens da ocorrência" />
+        </div>
+
+        <div className="form-section">
+          <h2>Documentos adicionais</h2>
+          <DocumentGallery
+            documentos={documents}
+            onUpload={handleDocumentUpload}
+            onDelete={handleDocumentDelete}
+            editable={true}
+            showMetadata={true}
+          />
         </div>
 
         {message && (

@@ -7,7 +7,9 @@ import { supabase } from '@/lib/supabase';
 import { ACTIONS, Fiscal, Occurrence } from '@/lib/types';
 import { PageTitle, EmptyState, Badge } from '@/components/ui';
 import { PhotoUpload } from '@/components/PhotoUpload';
+import { DocumentGallery } from '@/components/DocumentGallery';
 import { enqueue, enqueueUpdate } from '@/lib/offlineQueue';
+import { documentsApi, fileUtils } from '@/lib/documents';
 import { AutoInfracaoForm } from '@/screens/AutoInfracao';
 
 export function Inspection({ fiscal }: { fiscal: Fiscal | null }) {
@@ -185,6 +187,8 @@ function InspectionForm({
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
   const [photos, setPhotos] = useState<string[]>([]);
+  const [documents, setDocuments] = useState<any[]>([]);
+  const [loadingDocs, setLoadingDocs] = useState(false);
 
   const registerArrival = () => {
     if (!navigator.geolocation) { setMessage('Seu aparelho não disponibilizou a localização.'); return; }
@@ -192,6 +196,66 @@ function InspectionForm({
       (pos) => setArrival({ lat: pos.coords.latitude, lng: pos.coords.longitude, time: new Date() }),
       () => setMessage('Precisamos da localização para registrar a chegada.'),
     );
+  };
+
+  const loadDocuments = async () => {
+    if (!fiscal) return;
+    setLoadingDocs(true);
+    try {
+      const docs = await documentsApi.getByOccurrence(item.id);
+      setDocuments(docs);
+    } catch (error) {
+      console.error('Erro ao carregar documentos:', error);
+    } finally {
+      setLoadingDocs(false);
+    }
+  };
+
+  useEffect(() => {
+    loadDocuments();
+  }, [item.id, fiscal?.id]);
+
+  const handleDocumentUpload = async (files: File[]) => {
+    if (!fiscal) return;
+    try {
+      for (const file of files) {
+        const base64 = await fileUtils.fileToBase64(file);
+        
+        const documento = {
+          fiscal_id: fiscal.id,
+          ocorrencia_id: item.id,
+          vistoria_id: null,
+          ordem_servico_id: null,
+          tipo_documento: file.type.startsWith('image/') ? 'foto' : 'documento',
+          titulo: file.name,
+          descricao: `Documento da ocorrência ${item.id}`,
+          arquivo_data: base64,
+          arquivo_nome: file.name,
+          arquivo_tipo: file.type,
+          arquivo_tamanho: file.size,
+          ordem: documents.length,
+          metadados: {
+            uploadDate: new Date().toISOString(),
+            occurrenceId: item.id,
+          },
+        };
+
+        await documentsApi.create(documento);
+      }
+
+      await loadDocuments();
+    } catch (error) {
+      console.error('Erro ao fazer upload de documento:', error);
+    }
+  };
+
+  const handleDocumentDelete = async (id: string) => {
+    try {
+      await documentsApi.delete(id);
+      await loadDocuments();
+    } catch (error) {
+      console.error('Erro ao deletar documento:', error);
+    }
   };
 
   const submit = async (event: FormEvent) => {
@@ -309,6 +373,17 @@ function InspectionForm({
         <div className="form-section">
           <h2>Fotos "depois"</h2>
           <PhotoUpload photos={photos} onChange={setPhotos} max={5} minRequired={1} label="Anexar foto" hint="Mínimo 1 foto obrigatória" />
+        </div>
+
+        <div className="form-section">
+          <h2>Documentos adicionais</h2>
+          <DocumentGallery
+            documentos={documents}
+            onUpload={handleDocumentUpload}
+            onDelete={handleDocumentDelete}
+            editable={true}
+            showMetadata={true}
+          />
         </div>
 
         {message && <div className="form-message"><AlertTriangle size={16} />{message}</div>}
