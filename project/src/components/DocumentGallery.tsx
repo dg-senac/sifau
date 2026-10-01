@@ -9,7 +9,8 @@ import {
   Plus,
   ChevronLeft,
   ChevronRight,
-  Info
+  Info,
+  AlertCircle
 } from 'lucide-react';
 import { Documento } from '@/lib/types';
 import { fileUtils } from '@/lib/documents';
@@ -34,6 +35,7 @@ export function DocumentGallery({
   const [selectedDoc, setSelectedDoc] = useState<Documento | null>(null);
   const [draggedItem, setDraggedItem] = useState<string | null>(null);
   const [currentIndex, setCurrentIndex] = useState(0);
+  const [uploadError, setUploadError] = useState<string>('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const filteredDocs = documentos.sort((a, b) => a.ordem - b.ordem);
@@ -42,8 +44,20 @@ export function DocumentGallery({
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
+    setUploadError('');
+    
     if (files.length > 0 && onUpload) {
-      await onUpload(files);
+      try {
+        // Validar tamanho dos arquivos antes de fazer upload
+        for (const file of files) {
+          if (!fileUtils.validateFileSize(file, 10)) {
+            throw new Error(`Arquivo "${file.name}" excede o limite de 10MB`);
+          }
+        }
+        await onUpload(files);
+      } catch (err) {
+        setUploadError(err instanceof Error ? err.message : 'Erro ao fazer upload');
+      }
     }
     // Reset input
     if (fileInputRef.current) {
@@ -145,6 +159,14 @@ export function DocumentGallery({
             onChange={handleFileSelect}
             style={{ display: 'none' }}
           />
+        </div>
+      )}
+
+      {/* Erro de upload */}
+      {uploadError && (
+        <div className="gallery-error">
+          <AlertCircle size={14} />
+          {uploadError}
         </div>
       )}
 

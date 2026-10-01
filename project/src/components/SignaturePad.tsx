@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Eraser, ShieldCheck, Upload, FileText, Info, CheckCircle, XCircle } from 'lucide-react';
-import { signaturesApi } from '@/lib/documents';
+import { signaturesApi, fileUtils } from '@/lib/documents';
 
 interface SignaturePadProps {
   onChange: (dataUrl: string | null) => void;
@@ -149,12 +149,17 @@ export function SignaturePad({
     setLoadingCert(true);
 
     try {
+      // Validar tamanho do arquivo
+      if (!fileUtils.validateFileSize(file, 10)) {
+        throw new Error('Arquivo de certificado muito grande. Máximo: 10MB');
+      }
+
       // Simular leitura do certificado (em produção seria validação real)
       const certData = await file as any;
       
       // Extrair informações do certificado (simulado)
       const mockCertificateData: CertificateData = {
-        certificado: await fileToBase64(file),
+        certificado: await fileUtils.fileToBase64(file, false), // Não comprimir certificado
         emissor: 'Autoridade Certificadora Digital',
         validadeInicio: new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString(),
         validadeFim: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
@@ -182,18 +187,10 @@ export function SignaturePad({
     } catch (error) {
       console.error('Erro ao processar certificado:', error);
       setCertificateValid(false);
+      alert(error instanceof Error ? error.message : 'Erro ao processar certificado');
     } finally {
       setLoadingCert(false);
     }
-  };
-
-  const fileToBase64 = (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result as string);
-      reader.onerror = reject;
-      reader.readAsDataURL(file);
-    });
   };
 
   return (

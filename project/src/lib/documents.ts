@@ -245,8 +245,65 @@ export const signaturesApi = {
 
 // Funções auxiliares para converter arquivos
 export const fileUtils = {
-  // Converter arquivo para base64
-  async fileToBase64(file: File): Promise<string> {
+  // Validar tamanho do arquivo (máximo 5MB)
+  validateFileSize(file: File, maxSizeMB: number = 5): boolean {
+    const maxSizeBytes = maxSizeMB * 1024 * 1024;
+    return file.size <= maxSizeBytes;
+  },
+
+  // Comprimir imagem antes de converter para base64
+  async compressImage(file: File, maxWidth: number = 1920, quality: number = 0.85): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          let width = img.width;
+          let height = img.height;
+
+          // Redimensionar se necessário
+          if (width > maxWidth) {
+            height = (height * maxWidth) / width;
+            width = maxWidth;
+          }
+
+          canvas.width = width;
+          canvas.height = height;
+
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            reject(new Error('Failed to get canvas context'));
+            return;
+          }
+
+          ctx.drawImage(img, 0, 0, width, height);
+
+          // Converter para base64 com compressão
+          const compressedDataUrl = canvas.toDataURL('image/jpeg', quality);
+          resolve(compressedDataUrl);
+        };
+        img.onerror = reject;
+        img.src = e.target?.result as string;
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  },
+
+  // Converter arquivo para base64 (com compressão para imagens)
+  async fileToBase64(file: File, compress: boolean = true): Promise<string> {
+    // Validar tamanho
+    if (!this.validateFileSize(file, 10)) {
+      throw new Error('Arquivo muito grande. Máximo permitido: 10MB');
+    }
+
+    // Se for imagem e compressão estiver habilitada, comprimir
+    if (compress && file.type.startsWith('image/')) {
+      return this.compressImage(file);
+    }
+
+    // Para outros arquivos, converter direto
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => resolve(reader.result as string);

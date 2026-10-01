@@ -88,7 +88,12 @@ export function NewOccurrence({
     if (!fiscal) return;
     try {
       for (const file of files) {
-        const base64 = await fileUtils.fileToBase64(file);
+        // Validar tamanho antes de processar
+        if (!fileUtils.validateFileSize(file, 10)) {
+          throw new Error(`Arquivo "${file.name}" excede o limite de 10MB`);
+        }
+
+        const base64 = await fileUtils.fileToBase64(file, true);
         
         const documento = {
           fiscal_id: fiscal.id,
@@ -113,6 +118,7 @@ export function NewOccurrence({
       }
     } catch (error) {
       console.error('Erro ao fazer upload de documento:', error);
+      throw error; // Re-throw para que o DocumentGallery possa mostrar o erro
     }
   };
 

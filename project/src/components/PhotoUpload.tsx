@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
-import { Camera, X } from 'lucide-react';
+import { Camera, X, AlertCircle } from 'lucide-react';
+import { fileUtils } from '@/lib/documents';
 
 export function PhotoUpload({
   photos,
@@ -17,21 +18,27 @@ export function PhotoUpload({
   minRequired?: number;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const [error, setError] = useState<string>('');
 
-  const handleFiles = (files: FileList | null) => {
+  const handleFiles = async (files: FileList | null) => {
     if (!files) return;
+    setError('');
+    
     const remaining = max - photos.length;
     const toRead = Array.from(files).slice(0, remaining);
-    const readers = toRead.map(
-      (file) =>
-        new Promise<string>((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = () => resolve(reader.result as string);
-          reader.onerror = reject;
-          reader.readAsDataURL(file);
-        }),
-    );
-    Promise.all(readers).then((results) => onChange([...photos, ...results]));
+    
+    try {
+      const readers = toRead.map(
+        (file) =>
+          fileUtils.fileToBase64(file, true).catch((err) => {
+            throw new Error(`Erro no arquivo "${file.name}": ${err.message}`);
+          }),
+      );
+      const results = await Promise.all(readers);
+      onChange([...photos, ...results]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Erro ao processar arquivos');
+    }
   };
 
   const removePhoto = (index: number) => {
@@ -81,6 +88,12 @@ export function PhotoUpload({
               </button>
             </div>
           ))}
+        </div>
+      )}
+      {error && (
+        <div className="photo-error">
+          <AlertCircle size={14} />
+          {error}
         </div>
       )}
       <div className="photo-count">

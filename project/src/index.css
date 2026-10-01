@@ -49,6 +49,7 @@ button:disabled { opacity: .6; cursor: wait; }
 .document-gallery { display: grid; gap: 16px; }
 .gallery-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
 .gallery-header h3 { margin: 0; font-family: 'Space Grotesk'; font-size: 15px; color: #1b3f73; }
+.gallery-error { display: flex; align-items: center; gap: 6px; padding: 8px 10px; background: #fff0ef; border: 1px solid #f0d9a8; border-radius: 8px; color: #be4d4d; font-size: 11px; }
 .upload-button { display: inline-flex; align-items: center; gap: 6px; background: #1766d1; color: #fff; border-radius: 9px; padding: 8px 12px; font-size: 11px; font-weight: 700; border: 0; cursor: pointer; }
 .upload-button.empty { width: 100%; justify-content: center; min-height: 44px; }
 .gallery-section { display: grid; gap: 12px; }
@@ -142,6 +143,15 @@ button:disabled { opacity: .6; cursor: wait; }
 .signature-footer { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
 .signature-timestamp { font-size: 9px; color: #8291a6; }
 .signature-badge { display: flex; align-items: center; gap: 4px; background: #eaf9f2; color: #21835f; padding: 4px 8px; border-radius: 6px; font-size: 9px; font-weight: 700; }
+
+/* Photo Upload Styles */
+.photo-upload-wrap { display: grid; gap: 12px; }
+.photo-preview-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.photo-preview { position: relative; aspect-ratio: 1; border-radius: 10px; overflow: hidden; background: #f0f4f8; }
+.photo-preview img { width: 100%; height: 100%; object-fit: cover; }
+.photo-remove { position: absolute; top: 4px; right: 4px; width: 24px; height: 24px; background: rgba(0,0,0,.5); color: #fff; border-radius: 50%; display: grid; place-items: center; }
+.photo-error { display: flex; align-items: center; gap: 6px; padding: 8px 10px; background: #fff0ef; border: 1px solid #f0d9a8; border-radius: 8px; color: #be4d4d; font-size: 11px; margin-top: 8px; }
+.photo-count { text-align: center; font-size: 10px; color: #8291a6; margin-top: 6px; }
 
 /* Documents Screen Styles */
 .documents-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 16px; }

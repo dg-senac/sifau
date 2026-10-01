@@ -56,7 +56,12 @@ export function DocumentsScreen({ fiscal }: { fiscal: Fiscal | null }) {
 
     try {
       for (const file of files) {
-        const base64 = await fileUtils.fileToBase64(file);
+        // Validar tamanho antes de processar
+        if (!fileUtils.validateFileSize(file, 10)) {
+          throw new Error(`Arquivo "${file.name}" excede o limite de 10MB`);
+        }
+
+        const base64 = await fileUtils.fileToBase64(file, true);
         
         const documento: Omit<Documento, 'id' | 'criado_em' | 'atualizado_em'> = {
           fiscal_id: fiscal.id,
@@ -83,6 +88,7 @@ export function DocumentsScreen({ fiscal }: { fiscal: Fiscal | null }) {
       await loadDocuments();
     } catch (error) {
       console.error('Erro ao fazer upload:', error);
+      alert(error instanceof Error ? error.message : 'Erro ao fazer upload');
     } finally {
       setUploading(false);
     }
