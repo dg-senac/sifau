@@ -1,9 +1,86 @@
 import { FormEvent, useState } from 'react';
 import { AlertTriangle, Loader2, ShieldCheck } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
+import { isAdminCredentials } from '@/config/admin';
 
-export function AuthScreen() {
-  const [mode, setMode] = useState<'login' | 'signup'>('login');
+type AuthErrorDetails = {
+  code?: string;
+  message?: string;
+  name?: string;
+  status?: number;
+};
+
+function logAuthError(operation: string, error: unknown, sensitiveValues: string[]) {
+  if (!import.meta.env.DEV) return;
+
+  const details = (typeof error === 'object' && error !== null ? error : {}) as AuthErrorDetails;
+  let message = details.message ?? String(error);
+  for (const value of sensitiveValues) {
+    if (value) message = message.split(value).join('[redigido]');
+  }
+  console.error(`[SIFAU] Falha em ${operation}`, {
+    code: details.code,
+    message,
+    name: details.name,
+    status: details.status,
+  });
+}
+
+function getAuthErrorMessage(error: AuthErrorDetails) {
+  const message = `${error.code ?? ''} ${error.message ?? ''}`.toLowerCase();
+
+  if (message.includes('email_not_confirmed') || message.includes('email not confirmed')) {
+    return 'Confirme seu e-mail antes de entrar.';
+  }
+  if (
+    message.includes('invalid email') ||
+    message.includes('email address is invalid') ||
+    message.includes('unable to validate email') ||
+    message.includes('email_invalid')
+  ) {
+    return 'Informe um endereço de e-mail válido.';
+  }
+  if (
+    message.includes('weak password') ||
+    message.includes('password should be at least') ||
+    message.includes('password must be at least') ||
+    message.includes('password is too short') ||
+    message.includes('password_not_strong_enough')
+  ) {
+    return 'A senha não atende aos requisitos de segurança. Escolha uma senha mais forte.';
+  }
+  if (
+    message.includes('already registered') ||
+    message.includes('already been registered') ||
+    message.includes('user_already_exists') ||
+    message.includes('email_exists')
+  ) {
+    return 'Este e-mail já está cadastrado.';
+  }
+  if (message.includes('invalid login credentials')) {
+    return 'E-mail ou senha inválidos.';
+  }
+  if (error.status === 429) {
+    return 'Muitas tentativas. Aguarde um pouco e tente novamente.';
+  }
+  if (
+    error.status === 401 ||
+    error.status === 403 ||
+    error.status === 404 ||
+    message.includes('invalid api key') ||
+    message.includes('signup is disabled')
+  ) {
+    return 'Não foi possível conectar à autenticação do SIFAU. Verifique a configuração do Supabase.';
+  }
+  if (message.includes('fetch') || message.includes('network') || error.status === 0) {
+    return 'Falha de conexão. Verifique sua internet e tente novamente.';
+  }
+
+  return 'Não foi possível concluir a solicitação. Tente novamente.';
+}
+
+export function AuthScreen({ onAdmin }: { onAdmin?: () => void } = {}) {
+  const [mode, setMode] = useState<'login' | 'signup' | 'verify'>('login');
   const [form, setForm] = useState({
     nome: '',
     email: '',
@@ -11,51 +88,185 @@ export function AuthScreen() {
     telefone: '',
     bairro: '',
     especialidade: '',
+    codigo: '',
   });
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
+  const [pendingEmail, setPendingEmail] = useState('');
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    setBusy(true);
     setMessage('');
 
-    if (mode === 'login') {
-      const { error } = await supabase.auth.signInWithPassword({
-        email: form.email,
-        password: form.senha,
-      });
-      if (error) setMessage('E-mail ou senha inválidos.');
-    } else {
-      if (form.senha.length < 6) {
-        setMessage('A senha precisa ter pelo menos 6 caracteres.');
-        setBusy(false);
+    const email = form.email.trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setMessage('Informe um endereço de e-mail válido.');
+      return;
+    }
+    if (!form.senha) {
+      setMessage('Informe sua senha.');
+      return;
+    }
+    if (mode === 'signup') {
+      if (!form.nome.trim() || !form.telefone.trim() || !form.bairro.trim()) {
+        setMessage('Preencha nome, telefone e bairro/região.');
         return;
       }
-      const { data, error } = await supabase.auth.signUp({
-        email: form.email,
-        password: form.senha,
-      });
-      if (error) {
-        setMessage(
-          error.message.includes('already')
-            ? 'Este e-mail já está cadastrado.'
-            : 'Não foi possível criar o cadastro.',
-        );
-      } else if (data.user) {
-        const { error: profileError } = await supabase.from('fiscais').insert({
-          id: data.user.id,
-          email: form.email,
-          nome: form.nome,
-          telefone: form.telefone,
-          bairro: form.bairro,
-          especialidade: form.especialidade || null,
-        });
-        if (profileError)
-          setMessage('Conta criada, mas não foi possível concluir o perfil. Tente entrar novamente.');
+      if (form.senha.length < 6) {
+        setMessage('A senha precisa ter pelo menos 6 caracteres.');
+        return;
       }
     }
-    setBusy(false);
+
+    setBusy(true);
+    try {
+      if (mode === 'login') {
+        // Verificar primeiro se são credenciais de admin locais
+        if (isAdminCredentials(email, form.senha)) {
+          if (onAdmin) {
+            onAdmin();
+            setMessage('');
+          } else {
+            setMessage('Acesso de administrador não disponível neste contexto.');
+          }
+          setBusy(false);
+          return;
+        }
+
+        // Se não for admin, fazer login normal no Supabase
+        const { data, error } = await supabase.auth.signInWithPassword({
+          email,
+          password: form.senha,
+        });
+        if (error) {
+          logAuthError('login', error, [email, form.senha]);
+          setMessage(getAuthErrorMessage(error));
+        } else if (data.user) {
+          // Verificar se é administrador via Supabase (para casos antigos)
+          const { data: isAdmin } = await supabase.rpc('is_admin');
+          if (isAdmin && onAdmin) {
+            onAdmin();
+          }
+        }
+        return;
+      }
+
+      // Modo signup - criar usuário e enviar código OTP
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password: form.senha,
+        options: {
+          emailRedirectTo: undefined,
+          data: {
+            nome: form.nome.trim(),
+            telefone: form.telefone.trim(),
+            bairro: form.bairro.trim(),
+            especialidade: form.especialidade.trim() || null,
+          },
+        },
+      });
+      if (error) {
+        logAuthError('cadastro', error, [email, form.senha]);
+        setMessage(getAuthErrorMessage(error));
+      } else if (!data.user) {
+        setMessage('Não foi possível confirmar a criação da conta. Tente novamente.');
+      } else {
+        // Usuário criado, enviar código OTP
+        const { error: otpError } = await supabase.auth.signInWithOtp({
+          email,
+          options: {
+            shouldCreateUser: false,
+          },
+        });
+        if (otpError) {
+          logAuthError('envio do código', otpError, [email]);
+          setMessage('Conta criada, mas não foi possível enviar o código. Tente reenviar.');
+        } else {
+          setPendingEmail(email);
+          setMode('verify');
+          setMessage('Enviamos um código de 6 dígitos para ' + email + '. Digite o código abaixo.');
+        }
+      }
+    } catch (error) {
+      logAuthError(mode === 'login' ? 'login' : 'cadastro', error, [email, form.senha]);
+      setMessage(getAuthErrorMessage(error as AuthErrorDetails));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const verifyCode = async (event: FormEvent) => {
+    event.preventDefault();
+    setMessage('');
+
+    const code = form.codigo.trim();
+    if (code.length !== 6) {
+      setMessage('Digite o código de 6 dígitos.');
+      return;
+    }
+
+    setBusy(true);
+    try {
+      const { data, error } = await supabase.auth.verifyOtp({
+        email: pendingEmail,
+        token: code,
+        type: 'email',
+      });
+
+      if (error) {
+        logAuthError('verificação do código', error, [pendingEmail, code]);
+        setMessage('Código inválido ou expirado. Tente novamente.');
+      } else if (data.user) {
+        // Criar perfil fiscal após verificação
+        const { error: fiscalError } = await supabase
+          .from('fiscais')
+          .insert({
+            id: data.user.id,
+            email: data.user.email || pendingEmail,
+            nome: form.nome.trim(),
+            telefone: form.telefone.trim(),
+            bairro: form.bairro.trim(),
+            especialidade: form.especialidade.trim() || null,
+            ativo: true,
+          });
+
+        if (fiscalError) {
+          logAuthError('criação do perfil fiscal', fiscalError, [pendingEmail]);
+          setMessage('Conta verificada, mas houve um erro ao criar seu perfil. Tente entrar ou procure o suporte.');
+        } else {
+          setMessage('✅ Conta criada e verificada com sucesso! Seu cadastro já está ativo.');
+        }
+      }
+    } catch (error) {
+      logAuthError('verificação do código', error, [pendingEmail, code]);
+      setMessage('Não foi possível verificar o código. Tente novamente.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const resendCode = async () => {
+    setMessage('');
+    setBusy(true);
+    try {
+      const { error } = await supabase.auth.signInWithOtp({
+        email: pendingEmail,
+        options: {
+          shouldCreateUser: false,
+        },
+      });
+      if (error) {
+        logAuthError('reenvio do código', error, [pendingEmail]);
+        setMessage('Não foi possível reenviar o código. Tente novamente.');
+      } else {
+        setMessage('Código reenviado para ' + pendingEmail);
+      }
+    } catch (error) {
+      logAuthError('reenvio do código', error, [pendingEmail]);
+      setMessage('Não foi possível reenviar o código. Tente novamente.');
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -68,96 +279,144 @@ export function AuthScreen() {
         <p>Fiscalização urbana inteligente</p>
       </div>
       <div className="auth-card">
-        <div className="auth-tabs">
-          <button
-            className={mode === 'login' ? 'selected' : ''}
-            onClick={() => setMode('login')}
-          >
-            Entrar
-          </button>
-          <button
-            className={mode === 'signup' ? 'selected' : ''}
-            onClick={() => setMode('signup')}
-          >
-            Criar cadastro
-          </button>
-        </div>
-        <h2>{mode === 'login' ? 'Bem-vindo de volta' : 'Cadastro de fiscal'}</h2>
-        <p className="muted">
-          {mode === 'login' ? 'Acesse sua central de fiscalização.' : 'Preencha seus dados para começar.'}
-        </p>
-        <form onSubmit={submit}>
-          {mode === 'signup' && (
-            <>
+        {mode === 'verify' ? (
+          <>
+            <button
+              className="back-button"
+              onClick={() => setMode('signup')}
+            >
+              ← Voltar
+            </button>
+            <h2>Verificar e-mail</h2>
+            <p className="muted">
+              Digite o código de 6 dígitos enviado para {pendingEmail}
+            </p>
+            <form onSubmit={verifyCode}>
               <label>
-                Nome completo
+                Código de verificação
                 <input
                   required
-                  value={form.nome}
-                  onChange={(e) => setForm({ ...form, nome: e.target.value })}
-                  placeholder="Como devemos chamar você?"
+                  type="text"
+                  maxLength={6}
+                  value={form.codigo}
+                  onChange={(e) => setForm({ ...form, codigo: e.target.value })}
+                  placeholder="000000"
+                  style={{ letterSpacing: '4px', textAlign: 'center', fontSize: '24px' }}
                 />
               </label>
-              <div className="two-fields">
-                <label>
-                  Telefone
-                  <input
-                    required
-                    value={form.telefone}
-                    onChange={(e) => setForm({ ...form, telefone: e.target.value })}
-                    placeholder="(00) 00000-0000"
-                  />
-                </label>
-                <label>
-                  Bairro/região
-                  <input
-                    required
-                    value={form.bairro}
-                    onChange={(e) => setForm({ ...form, bairro: e.target.value })}
-                    placeholder="Sua região"
-                  />
-                </label>
-              </div>
-              <label>
-                Esspecialidade <span className="optional">opcional</span>
-                <input
-                  value={form.especialidade}
-                  onChange={(e) => setForm({ ...form, especialidade: e.target.value })}
-                  placeholder="Ex.: obras e posturas"
-                />
-              </label>
-            </>
-          )}
-          <label>
-            E-mail
-            <input
-              required
-              type="email"
-              value={form.email}
-              onChange={(e) => setForm({ ...form, email: e.target.value })}
-              placeholder="fiscal@prefeitura.gov.br"
-            />
-          </label>
-          <label>
-            Senha
-            <input
-              required
-              type="password"
-              value={form.senha}
-              onChange={(e) => setForm({ ...form, senha: e.target.value })}
-              placeholder="Sua senha"
-            />
-          </label>
-          {message && (
-            <div className="form-message">
-              <AlertTriangle size={16} />
-              {message}
+              {message && (
+                <div className="form-message">
+                  <AlertTriangle size={16} />
+                  {message}
+                </div>
+              )}
+              <button className="primary-button full" disabled={busy}>
+                {busy ? <Loader2 className="spin" size={18} /> : 'Verificar código'}
+              </button>
+              <button
+                type="button"
+                className="secondary-button full"
+                onClick={resendCode}
+                disabled={busy}
+              >
+                Reenviar código
+              </button>
+            </form>
+          </>
+        ) : (
+          <>
+            <div className="auth-tabs">
+              <button
+                className={mode === 'login' ? 'selected' : ''}
+                onClick={() => setMode('login')}
+              >
+                Entrar
+              </button>
+              <button
+                className={mode === 'signup' ? 'selected' : ''}
+                onClick={() => setMode('signup')}
+              >
+                Criar cadastro
+              </button>
             </div>
-          )}
-          <button className="primary-button full" disabled={busy}>
-            {busy ? <Loader2 className="spin" size={18} /> : mode === 'login' ? 'Entrar no SIFAU' : 'Criar acesso'}
-          </button>
-        </form>
+            <h2>{mode === 'login' ? 'Bem-vindo de volta' : 'Cadastro de fiscal'}</h2>
+            <p className="muted">
+              {mode === 'login' ? 'Acesse sua central de fiscalização.' : 'Preencha seus dados para começar.'}
+            </p>
+            <form onSubmit={submit}>
+              {mode === 'signup' && (
+                <>
+                  <label>
+                    Nome completo
+                    <input
+                      required
+                      value={form.nome}
+                      onChange={(e) => setForm({ ...form, nome: e.target.value })}
+                      placeholder="Como devemos chamar você?"
+                    />
+                  </label>
+                  <div className="two-fields">
+                    <label>
+                      Telefone
+                      <input
+                        required
+                        value={form.telefone}
+                        onChange={(e) => setForm({ ...form, telefone: e.target.value })}
+                        placeholder="(00) 00000-0000"
+                      />
+                    </label>
+                    <label>
+                      Bairro/região
+                      <input
+                        required
+                        value={form.bairro}
+                        onChange={(e) => setForm({ ...form, bairro: e.target.value })}
+                        placeholder="Sua região"
+                      />
+                    </label>
+                  </div>
+                  <label>
+                    Esspecialidade <span className="optional">opcional</span>
+                    <input
+                      value={form.especialidade}
+                      onChange={(e) => setForm({ ...form, especialidade: e.target.value })}
+                      placeholder="Ex.: obras e posturas"
+                    />
+                  </label>
+                </>
+              )}
+              <label>
+                E-mail
+                <input
+                  required
+                  type="email"
+                  value={form.email}
+                  onChange={(e) => setForm({ ...form, email: e.target.value })}
+                  placeholder="fiscal@prefeitura.gov.br"
+                />
+              </label>
+              <label>
+                Senha
+                <input
+                  required
+                  type="password"
+                  value={form.senha}
+                  onChange={(e) => setForm({ ...form, senha: e.target.value })}
+                  placeholder="Sua senha"
+                />
+              </label>
+              {message && (
+                <div className="form-message">
+                  <AlertTriangle size={16} />
+                  {message}
+                </div>
+              )}
+              <button className="primary-button full" disabled={busy}>
+                {busy ? <Loader2 className="spin" size={18} /> : mode === 'login' ? 'Entrar no SIFAU' : 'Criar acesso'}
+              </button>
+            </form>
+          </>
+        )}
       </div>
       <small className="auth-footer">Acesso restrito a fiscais municipais</small>
     </div>

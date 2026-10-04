@@ -1,9 +1,9 @@
 import { FormEvent, useEffect, useState } from 'react';
 import {
-  AlertTriangle, Calendar, ChevronRight, Clock3, FileText, MapPin, Navigation, User, X,
+  AlertTriangle, Calendar, Camera, ChevronRight, Clock3, Edit2, FileText, MapPin, Navigation, Save, User, X,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
-import { Fiscal, Occurrence, OCCURRENCE_STATUSES, Vistoria } from '@/lib/types';
+import { Fiscal, Occurrence, OCCURRENCE_STATUSES, Vistoria, CATEGORIES, SUBCATEGORIES, URGENCY_LEVELS } from '@/lib/types';
 import { PageTitle, Badge, UrgencyBadge } from '@/components/ui';
 
 export function OccurrenceDetail({
@@ -24,6 +24,17 @@ export function OccurrenceDetail({
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
   const [showStatusForm, setShowStatusForm] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editForm, setEditForm] = useState({
+    categoria: item.categoria,
+    subcategoria: item.subcategoria,
+    descricao: item.descricao,
+    urgencia: item.urgencia,
+    endereco: item.endereco,
+    bairro: item.bairro,
+    latitude: item.latitude,
+    longitude: item.longitude,
+  });
 
   const load = async () => {
     const [{ data: vData }, { data: aData }, { data: fData }] = await Promise.all([
@@ -73,73 +84,286 @@ export function OccurrenceDetail({
     load();
   };
 
+  const saveEdit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!fiscal) return;
+    setSaving(true);
+    setMessage('');
+
+    const { error } = await supabase.from('ocorrencias').update({
+      categoria: editForm.categoria,
+      subcategoria: editForm.subcategoria,
+      descricao: editForm.descricao,
+      urgencia: editForm.urgencia,
+      endereco: editForm.endereco,
+      bairro: editForm.bairro,
+      latitude: editForm.latitude,
+      longitude: editForm.longitude,
+    }).eq('id', item.id);
+
+    if (error) {
+      setMessage('Erro ao salvar alterações.');
+      setSaving(false);
+      return;
+    }
+
+    await supabase.from('auditoria').insert({
+      ocorrencia_id: item.id,
+      status_anterior: item.status,
+      status_novo: item.status,
+      fiscal_id: fiscal.id,
+      observacao: 'Dados da ocorrência editados',
+    });
+
+    setIsEditing(false);
+    setSaving(false);
+    load();
+  };
+
+  const cancelEdit = () => {
+    setEditForm({
+      categoria: item.categoria,
+      subcategoria: item.subcategoria,
+      descricao: item.descricao,
+      urgencia: item.urgencia,
+      endereco: item.endereco,
+      bairro: item.bairro,
+      latitude: item.latitude,
+      longitude: item.longitude,
+    });
+    setIsEditing(false);
+  };
+
+  const getCurrentLocation = () => {
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          setEditForm({
+            ...editForm,
+            latitude: position.coords.latitude,
+            longitude: position.coords.longitude,
+          });
+        },
+        (error) => {
+          setMessage('Não foi possível obter sua localização.');
+        }
+      );
+    } else {
+      setMessage('Geolocalização não suportada neste navegador.');
+    }
+  };
+
   return (
     <>
       <PageTitle
         eyebrow="Detalhe da ocorrência"
-        title={item.categoria}
+        title={isEditing ? 'Editar ocorrência' : item.categoria}
         action={
-          <button className="icon-button light" onClick={onClose}>
-            <X size={20} />
-          </button>
+          fiscal && !isEditing ? (
+            <button className="icon-button light" onClick={() => setIsEditing(true)}>
+              <Edit2 size={18} />
+            </button>
+          ) : (
+            <button className="icon-button light" onClick={onClose}>
+              <X size={20} />
+            </button>
+          )
         }
       />
-      <div className="occurrence-detail">
-        <div className="detail-top-row">
-          <UrgencyBadge urgency={item.urgencia} />
-          <Badge danger={overdue}>{item.status}</Badge>
-        </div>
-        <p>{item.descricao}</p>
-        <div className="detail-info-grid">
-          <div className="detail-info-item">
-            <MapPin size={15} />
-            <div>
-              <span>Endereço</span>
-              <b>{item.endereco}</b>
-              <small>{item.bairro}</small>
-            </div>
-          </div>
-          <div className="detail-info-item">
-            <User size={15} />
-            <div>
-              <span>Registrado por</span>
-              <b>{fiscalNome}</b>
-            </div>
-          </div>
-          {designadoNome && (
-            <div className="detail-info-item">
-              <Navigation size={15} />
-              <div>
-                <span>Designado para</span>
-                <b>{designadoNome}</b>
+      {isEditing ? (
+        <form className="form-card" onSubmit={saveEdit}>
+          <div className="form-section">
+            <h2>Editar ocorrência</h2>
+            <label>
+              Categoria
+              <select
+                value={editForm.categoria}
+                onChange={(e) => setEditForm({ ...editForm, categoria: e.target.value, subcategoria: SUBCATEGORIES[e.target.value]?.[0] || '' })}
+              >
+                {CATEGORIES.map((cat) => (
+                  <option key={cat} value={cat}>{cat}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Subcategoria
+              <select
+                value={editForm.subcategoria}
+                onChange={(e) => setEditForm({ ...editForm, subcategoria: e.target.value })}
+              >
+                {SUBCATEGORIES[editForm.categoria]?.map((sub) => (
+                  <option key={sub} value={sub}>{sub}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Urgência
+              <select
+                value={editForm.urgencia}
+                onChange={(e) => setEditForm({ ...editForm, urgencia: e.target.value })}
+              >
+                {URGENCY_LEVELS.map((level) => (
+                  <option key={level} value={level}>{level}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Descrição
+              <textarea
+                value={editForm.descricao}
+                onChange={(e) => setEditForm({ ...editForm, descricao: e.target.value })}
+                placeholder="Descreva o problema..."
+                rows={3}
+              />
+            </label>
+            <label>
+              Endereço
+              <input
+                value={editForm.endereco}
+                onChange={(e) => setEditForm({ ...editForm, endereco: e.target.value })}
+                placeholder="Rua, número, complemento"
+              />
+            </label>
+            <label>
+              Bairro/região
+              <input
+                value={editForm.bairro}
+                onChange={(e) => setEditForm({ ...editForm, bairro: e.target.value })}
+                placeholder="Bairro"
+              />
+            </label>
+            <label>
+              Localização
+              <div className="two-fields">
+                <input
+                  type="number"
+                  step="any"
+                  value={editForm.latitude || ''}
+                  onChange={(e) => setEditForm({ ...editForm, latitude: e.target.value ? parseFloat(e.target.value) : null })}
+                  placeholder="Latitude"
+                />
+                <input
+                  type="number"
+                  step="any"
+                  value={editForm.longitude || ''}
+                  onChange={(e) => setEditForm({ ...editForm, longitude: e.target.value ? parseFloat(e.target.value) : null })}
+                  placeholder="Longitude"
+                />
               </div>
+              <button
+                type="button"
+                className="location-button"
+                onClick={getCurrentLocation}
+              >
+                <MapPin size={16} />
+                {editForm.latitude && editForm.longitude ? 'Atualizar localização' : 'Usar minha localização'}
+              </button>
+            </label>
+          </div>
+          {message && (
+            <div className="form-message">
+              <AlertTriangle size={16} />
+              {message}
             </div>
           )}
-          <div className="detail-info-item">
-            <Clock3 size={15} />
-            <div>
-              <span>SLA</span>
-              <b className={overdue ? 'text-danger' : ''}>
-                {overdue ? 'Estourado' : slaRemaining > 0 ? `${slaRemaining}h restantes` : 'Vencendo'}
-              </b>
-              <small>{new Date(item.sla_deadline).toLocaleString('pt-BR')}</small>
+          <div className="form-actions">
+            <button type="button" className="ghost-button" onClick={cancelEdit}>Cancelar</button>
+            <button className="primary-button" disabled={saving}>
+              {saving ? 'Salvando...' : <><Save size={16} /> Salvar</>}
+            </button>
+          </div>
+        </form>
+      ) : (
+        <div className="occurrence-detail">
+          <div className="detail-header">
+            <div className="detail-badges">
+              <UrgencyBadge urgency={item.urgencia} />
+              <Badge danger={overdue}>{item.status}</Badge>
+            </div>
+            <div className="detail-meta">
+              <span className="detail-category">{item.categoria}</span>
+              <span className="detail-subcategory">{item.subcategoria}</span>
             </div>
           </div>
-          <div className="detail-info-item">
-            <Calendar size={15} />
-            <div>
-              <span>Criada em</span>
-              <b>{new Date(item.created_at).toLocaleString('pt-BR')}</b>
+
+          <div className="detail-description">
+            <p>{item.descricao}</p>
+          </div>
+
+          <div className="detail-sections">
+            <div className="detail-section">
+              <h3 className="detail-section-title">
+                <MapPin size={16} />
+                Localização
+              </h3>
+              <div className="detail-section-content">
+                <div className="detail-address">
+                  <b>{item.endereco}</b>
+                  <span>{item.bairro}</span>
+                </div>
+                {item.latitude && item.longitude && (
+                  <div className="detail-coords">
+                    <MapPin size={14} />
+                    <span>{item.latitude.toFixed(5)}, {item.longitude.toFixed(5)}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="detail-section">
+              <h3 className="detail-section-title">
+                <User size={16} />
+                Responsáveis
+              </h3>
+              <div className="detail-section-content">
+                <div className="detail-responsible">
+                  <span className="detail-label">Registrado por</span>
+                  <b>{fiscalNome}</b>
+                </div>
+                {designadoNome && (
+                  <div className="detail-responsible">
+                    <span className="detail-label">Designado para</span>
+                    <b>{designadoNome}</b>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="detail-section">
+              <h3 className="detail-section-title">
+                <Clock3 size={16} />
+                Prazos
+              </h3>
+              <div className="detail-section-content">
+                <div className={`detail-sla ${overdue ? 'overdue' : ''}`}>
+                  <span className="detail-label">SLA</span>
+                  <b>
+                    {overdue ? '⚠️ Estourado' : slaRemaining > 0 ? `${slaRemaining}h restantes` : 'Vencendo'}
+                  </b>
+                  <small>{new Date(item.sla_deadline).toLocaleString('pt-BR')}</small>
+                </div>
+              </div>
+            </div>
+
+            <div className="detail-section">
+              <h3 className="detail-section-title">
+                <Calendar size={16} />
+                Informações
+              </h3>
+              <div className="detail-section-content">
+                <div className="detail-info">
+                  <span className="detail-label">Criada em</span>
+                  <b>{new Date(item.created_at).toLocaleString('pt-BR')}</b>
+                </div>
+                <div className="detail-info">
+                  <span className="detail-label">ID da ocorrência</span>
+                  <small>{item.id.slice(0, 8)}...</small>
+                </div>
+              </div>
             </div>
           </div>
         </div>
-        {item.latitude && item.longitude && (
-          <div className="detail-coords">
-            <MapPin size={14} />
-            {item.latitude.toFixed(5)}, {item.longitude.toFixed(5)}
-          </div>
-        )}
-      </div>
+      )}
 
       {fiscal && !showStatusForm && (
         <button className="outline-button full" onClick={() => { setNewStatus(item.status); setShowStatusForm(true); }}>
@@ -187,7 +411,11 @@ export function OccurrenceDetail({
         <h2>Vistorias ({vistorias.length})</h2>
       </div>
       {vistorias.length === 0 ? (
-        <span className="muted">Nenhuma vistoria realizada.</span>
+        <div className="empty-state">
+          <FileText size={32} />
+          <b>Nenhuma vistoria realizada</b>
+          <span>Esta ocorrência ainda não foi inspecionada</span>
+        </div>
       ) : (
         <div className="audit-list">
           {vistorias.map((v) => (
@@ -210,7 +438,11 @@ export function OccurrenceDetail({
         <h2>Histórico de status ({auditLogs.length})</h2>
       </div>
       {auditLogs.length === 0 ? (
-        <span className="muted">Sem movimentações registradas.</span>
+        <div className="empty-state">
+          <Clock3 size={32} />
+          <b>Sem movimentações</b>
+          <span>Nenhuma alteração de status registrada</span>
+        </div>
       ) : (
         <div className="audit-list">
           {auditLogs.map((log) => (

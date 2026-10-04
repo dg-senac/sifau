@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
@@ -10,6 +10,8 @@ import {
 import { supabase } from '@/lib/supabase';
 import { CATEGORIES, OCCURRENCE_STATUSES } from '@/lib/types';
 import { PageTitle } from '@/components/ui';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
 
 export function Dashboard() {
   const [stats, setStats] = useState({ total: 0, resolved: 0, overdue: 0 });
@@ -17,10 +19,13 @@ export function Dashboard() {
   const [byStatus, setByStatus] = useState<{ status: string; count: number }[]>([]);
   const [fiscalRanking, setFiscalRanking] = useState<{ nome: string; resolvidas: number; compliance: number }[]>([]);
   const [escalated, setEscalated] = useState<number>(0);
+  const [occurrences, setOccurrences] = useState<any[]>([]);
+  const mapRef = useRef<HTMLDivElement>(null);
+  const mapInstanceRef = useRef<L.Map | null>(null);
 
   useEffect(() => {
     const fetchDashboardData = async () => {
-      const [total, resolved, overdue] = await Promise.all([
+      const [total, resolved, overdue, occData] = await Promise.all([
         supabase.from('ocorrencias').select('id', { count: 'exact', head: true }),
         supabase
           .from('ocorrencias')
@@ -31,6 +36,12 @@ export function Dashboard() {
           .select('id', { count: 'exact', head: true })
           .lt('sla_deadline', new Date().toISOString())
           .not('status', 'in', '(Resolvida,Arquivada)'),
+        supabase
+          .from('ocorrencias')
+          .select('id, categoria, status, urgencia, latitude, longitude, created_at')
+          .not('latitude', 'is', null)
+          .not('longitude', 'is', null)
+          .gte('created_at', new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()),
       ]);
 
       setStats({
@@ -38,6 +49,8 @@ export function Dashboard() {
         resolved: resolved.count ?? 0,
         overdue: overdue.count ?? 0,
       });
+
+      setOccurrences(occData ?? []);
 
       const { data: categoryData } = await supabase.from('ocorrencias').select('categoria');
       const counts: Record<string, number> = {};
@@ -98,6 +111,76 @@ export function Dashboard() {
 
     fetchDashboardData();
   }, []);
+
+  useEffect(() => {
+    const initMap = () => {
+      if (!mapRef.current || occurrences.length === 0) return;
+
+      try {
+        if (mapInstanceRef.current) {
+          mapInstanceRef.current.remove();
+        }
+
+        const map = L.map(mapRef.current).setView([-23.5505, -46.6333], 12);
+
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          attribution: '© OpenStreetMap contributors',
+        }).addTo(map);
+
+        const getColorByStatus = (status: string) => {
+          switch (status) {
+            case 'Resolvida': return '#2aaf75';
+            case 'Em vistoria': return '#f0a428';
+            case 'Escalonada': return '#be4d4d';
+            case 'Aberta': return '#4f8fe1';
+            default: return '#79a8e2';
+          }
+        };
+
+        occurrences.forEach((occ) => {
+          const marker = L.circleMarker([occ.latitude, occ.longitude], {
+            radius: 8,
+            fillColor: getColorByStatus(occ.status),
+            color: '#fff',
+            weight: 2,
+            opacity: 1,
+            fillOpacity: 0.8,
+          }).addTo(map);
+
+          marker.bindPopup(`
+            <div style="font-family: sans-serif; font-size: 12px;">
+              <strong>${occ.categoria}</strong><br/>
+              Status: ${occ.status}<br/>
+              Urgência: ${occ.urgencia}<br/>
+              <small>${new Date(occ.created_at).toLocaleDateString('pt-BR')}</small>
+            </div>
+          `);
+        });
+
+        if (occurrences.length > 0) {
+          const group = L.featureGroup(
+            occurrences.map((occ) =>
+              L.circleMarker([occ.latitude, occ.longitude])
+            )
+          );
+          map.fitBounds(group.getBounds().pad(0.1));
+        }
+
+        mapInstanceRef.current = map;
+      } catch (error) {
+        console.error('Erro ao inicializar mapa:', error);
+      }
+    };
+
+    initMap();
+
+    return () => {
+      if (mapInstanceRef.current) {
+        mapInstanceRef.current.remove();
+        mapInstanceRef.current = null;
+      }
+    };
+  }, [occurrences]);
 
   const compliance = stats.total ? Math.round((stats.resolved / stats.total) * 100) : 0;
   const maxStatus = Math.max(...byStatus.map((s) => s.count), 1);
@@ -177,13 +260,15 @@ export function Dashboard() {
           <h2>Concentração na cidade</h2>
           <span className="muted">Últimos 30 dias</span>
         </div>
-        <div className="map-placeholder">
-          <div className="map-grid" />
-          <div className="map-pin pin-a"><MapPin size={21} /></div>
-          <div className="map-pin pin-b"><MapPin size={21} /></div>
-          <div className="map-pin pin-c"><MapPin size={21} /></div>
-          <span>Mapa operacional</span>
-        </div>
+        {occurrences.length === 0 ? (
+          <div className="empty-state">
+            <MapPin size={32} />
+            <b>Sem dados de localização</b>
+            <span>Nenhuma ocorrência com coordenadas nos últimos 30 dias</span>
+          </div>
+        ) : (
+          <div ref={mapRef} className="map-container" style={{ height: '300px', borderRadius: '10px', overflow: 'hidden' }} />
+        )}
       </section>
 
       <section className="dashboard-card">
