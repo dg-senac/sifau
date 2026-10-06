@@ -192,9 +192,28 @@ function InspectionForm({
 
   const registerArrival = () => {
     if (!navigator.geolocation) { setMessage('Seu aparelho não disponibilizou a localização.'); return; }
+    setMessage('Obtendo localização...');
     navigator.geolocation.getCurrentPosition(
-      (pos) => setArrival({ lat: pos.coords.latitude, lng: pos.coords.longitude, time: new Date() }),
-      () => setMessage('Precisamos da localização para registrar a chegada.'),
+      (pos) => {
+        setArrival({ lat: pos.coords.latitude, lng: pos.coords.longitude, time: new Date() });
+        setMessage('');
+      },
+      (error) => {
+        let errorMsg = 'Não foi possível obter a localização.';
+        if (error.code === error.PERMISSION_DENIED) {
+          errorMsg = 'Permita o acesso à localização nas configurações do aparelho.';
+        } else if (error.code === error.POSITION_UNAVAILABLE) {
+          errorMsg = 'Localização indisponível. Verifique o GPS.';
+        } else if (error.code === error.TIMEOUT) {
+          errorMsg = 'Tempo esgotado ao obter localização. Tente novamente.';
+        }
+        setMessage(errorMsg);
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 15000,
+        maximumAge: 0,
+      }
     );
   };
 

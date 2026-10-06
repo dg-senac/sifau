@@ -29,9 +29,6 @@ function logAuthError(operation: string, error: unknown, sensitiveValues: string
 function getAuthErrorMessage(error: AuthErrorDetails) {
   const message = `${error.code ?? ''} ${error.message ?? ''}`.toLowerCase();
 
-  if (message.includes('email_not_confirmed') || message.includes('email not confirmed')) {
-    return 'Confirme seu e-mail antes de entrar.';
-  }
   if (
     message.includes('invalid email') ||
     message.includes('email address is invalid') ||
@@ -80,7 +77,7 @@ function getAuthErrorMessage(error: AuthErrorDetails) {
 }
 
 export function AuthScreen({ onAdmin }: { onAdmin?: () => void } = {}) {
-  const [mode, setMode] = useState<'login' | 'signup' | 'verify'>('login');
+  const [mode, setMode] = useState<'login' | 'signup'>('login');
   const [form, setForm] = useState({
     nome: '',
     email: '',
@@ -88,11 +85,9 @@ export function AuthScreen({ onAdmin }: { onAdmin?: () => void } = {}) {
     telefone: '',
     bairro: '',
     especialidade: '',
-    codigo: '',
   });
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
-  const [pendingEmail, setPendingEmail] = useState('');
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -151,12 +146,11 @@ export function AuthScreen({ onAdmin }: { onAdmin?: () => void } = {}) {
         return;
       }
 
-      // Modo signup - criar usuário e enviar código OTP
+      // Modo signup - criar usuário sem confirmação de email
       const { data, error } = await supabase.auth.signUp({
         email,
         password: form.senha,
         options: {
-          emailRedirectTo: undefined,
           data: {
             nome: form.nome.trim(),
             telefone: form.telefone.trim(),
@@ -171,58 +165,12 @@ export function AuthScreen({ onAdmin }: { onAdmin?: () => void } = {}) {
       } else if (!data.user) {
         setMessage('Não foi possível confirmar a criação da conta. Tente novamente.');
       } else {
-        // Usuário criado, enviar código OTP
-        const { error: otpError } = await supabase.auth.signInWithOtp({
-          email,
-          options: {
-            shouldCreateUser: false,
-          },
-        });
-        if (otpError) {
-          logAuthError('envio do código', otpError, [email]);
-          setMessage('Conta criada, mas não foi possível enviar o código. Tente reenviar.');
-        } else {
-          setPendingEmail(email);
-          setMode('verify');
-          setMessage('Enviamos um código de 6 dígitos para ' + email + '. Digite o código abaixo.');
-        }
-      }
-    } catch (error) {
-      logAuthError(mode === 'login' ? 'login' : 'cadastro', error, [email, form.senha]);
-      setMessage(getAuthErrorMessage(error as AuthErrorDetails));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const verifyCode = async (event: FormEvent) => {
-    event.preventDefault();
-    setMessage('');
-
-    const code = form.codigo.trim();
-    if (code.length !== 6) {
-      setMessage('Digite o código de 6 dígitos.');
-      return;
-    }
-
-    setBusy(true);
-    try {
-      const { data, error } = await supabase.auth.verifyOtp({
-        email: pendingEmail,
-        token: code,
-        type: 'email',
-      });
-
-      if (error) {
-        logAuthError('verificação do código', error, [pendingEmail, code]);
-        setMessage('Código inválido ou expirado. Tente novamente.');
-      } else if (data.user) {
-        // Criar perfil fiscal após verificação
+        // Criar perfil fiscal após cadastro
         const { error: fiscalError } = await supabase
           .from('fiscais')
           .insert({
             id: data.user.id,
-            email: data.user.email || pendingEmail,
+            email: data.user.email || email,
             nome: form.nome.trim(),
             telefone: form.telefone.trim(),
             bairro: form.bairro.trim(),
@@ -231,39 +179,23 @@ export function AuthScreen({ onAdmin }: { onAdmin?: () => void } = {}) {
           });
 
         if (fiscalError) {
-          logAuthError('criação do perfil fiscal', fiscalError, [pendingEmail]);
-          setMessage('Conta verificada, mas houve um erro ao criar seu perfil. Tente entrar ou procure o suporte.');
+          logAuthError('criação do perfil fiscal', fiscalError, [email]);
+          setMessage('Conta criada, mas houve um erro ao criar seu perfil. Tente entrar ou procure o suporte.');
         } else {
-          setMessage('✅ Conta criada e verificada com sucesso! Seu cadastro já está ativo.');
+          // Fazer login automático após cadastro
+          const { error: loginError } = await supabase.auth.signInWithPassword({
+            email,
+            password: form.senha,
+          });
+          if (loginError) {
+            logAuthError('login após cadastro', loginError, [email, form.senha]);
+            setMessage('✅ Conta criada com sucesso! Faça login para entrar.');
+          }
         }
       }
     } catch (error) {
-      logAuthError('verificação do código', error, [pendingEmail, code]);
-      setMessage('Não foi possível verificar o código. Tente novamente.');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const resendCode = async () => {
-    setMessage('');
-    setBusy(true);
-    try {
-      const { error } = await supabase.auth.signInWithOtp({
-        email: pendingEmail,
-        options: {
-          shouldCreateUser: false,
-        },
-      });
-      if (error) {
-        logAuthError('reenvio do código', error, [pendingEmail]);
-        setMessage('Não foi possível reenviar o código. Tente novamente.');
-      } else {
-        setMessage('Código reenviado para ' + pendingEmail);
-      }
-    } catch (error) {
-      logAuthError('reenvio do código', error, [pendingEmail]);
-      setMessage('Não foi possível reenviar o código. Tente novamente.');
+      logAuthError(mode === 'login' ? 'login' : 'cadastro', error, [email, form.senha]);
+      setMessage(getAuthErrorMessage(error as AuthErrorDetails));
     } finally {
       setBusy(false);
     }
@@ -279,144 +211,96 @@ export function AuthScreen({ onAdmin }: { onAdmin?: () => void } = {}) {
         <p>Fiscalização urbana inteligente</p>
       </div>
       <div className="auth-card">
-        {mode === 'verify' ? (
-          <>
-            <button
-              className="back-button"
-              onClick={() => setMode('signup')}
-            >
-              ← Voltar
-            </button>
-            <h2>Verificar e-mail</h2>
-            <p className="muted">
-              Digite o código de 6 dígitos enviado para {pendingEmail}
-            </p>
-            <form onSubmit={verifyCode}>
+        <div className="auth-tabs">
+          <button
+            className={mode === 'login' ? 'selected' : ''}
+            onClick={() => setMode('login')}
+          >
+            Entrar
+          </button>
+          <button
+            className={mode === 'signup' ? 'selected' : ''}
+            onClick={() => setMode('signup')}
+          >
+            Criar cadastro
+          </button>
+        </div>
+        <h2>{mode === 'login' ? 'Bem-vindo de volta' : 'Cadastro de fiscal'}</h2>
+        <p className="muted">
+          {mode === 'login' ? 'Acesse sua central de fiscalização.' : 'Preencha seus dados para começar.'}
+        </p>
+        <form onSubmit={submit}>
+          {mode === 'signup' && (
+            <>
               <label>
-                Código de verificação
+                Nome completo
                 <input
                   required
-                  type="text"
-                  maxLength={6}
-                  value={form.codigo}
-                  onChange={(e) => setForm({ ...form, codigo: e.target.value })}
-                  placeholder="000000"
-                  style={{ letterSpacing: '4px', textAlign: 'center', fontSize: '24px' }}
+                  value={form.nome}
+                  onChange={(e) => setForm({ ...form, nome: e.target.value })}
+                  placeholder="Como devemos chamar você?"
                 />
               </label>
-              {message && (
-                <div className="form-message">
-                  <AlertTriangle size={16} />
-                  {message}
-                </div>
-              )}
-              <button className="primary-button full" disabled={busy}>
-                {busy ? <Loader2 className="spin" size={18} /> : 'Verificar código'}
-              </button>
-              <button
-                type="button"
-                className="secondary-button full"
-                onClick={resendCode}
-                disabled={busy}
-              >
-                Reenviar código
-              </button>
-            </form>
-          </>
-        ) : (
-          <>
-            <div className="auth-tabs">
-              <button
-                className={mode === 'login' ? 'selected' : ''}
-                onClick={() => setMode('login')}
-              >
-                Entrar
-              </button>
-              <button
-                className={mode === 'signup' ? 'selected' : ''}
-                onClick={() => setMode('signup')}
-              >
-                Criar cadastro
-              </button>
+              <div className="two-fields">
+                <label>
+                  Telefone
+                  <input
+                    required
+                    value={form.telefone}
+                    onChange={(e) => setForm({ ...form, telefone: e.target.value })}
+                    placeholder="(00) 00000-0000"
+                  />
+                </label>
+                <label>
+                  Bairro/região
+                  <input
+                    required
+                    value={form.bairro}
+                    onChange={(e) => setForm({ ...form, bairro: e.target.value })}
+                    placeholder="Sua região"
+                  />
+                </label>
+              </div>
+              <label>
+                Esspecialidade <span className="optional">opcional</span>
+                <input
+                  value={form.especialidade}
+                  onChange={(e) => setForm({ ...form, especialidade: e.target.value })}
+                  placeholder="Ex.: obras e posturas"
+                />
+              </label>
+            </>
+          )}
+          <label>
+            E-mail
+            <input
+              required
+              type="email"
+              value={form.email}
+              onChange={(e) => setForm({ ...form, email: e.target.value })}
+              placeholder="fiscal@prefeitura.gov.br"
+            />
+          </label>
+          <label>
+            Senha
+            <input
+              required
+              type="password"
+              value={form.senha}
+              onChange={(e) => setForm({ ...form, senha: e.target.value })}
+              placeholder="Sua senha"
+            />
+          </label>
+          {message && (
+            <div className="form-message">
+              <AlertTriangle size={16} />
+              {message}
             </div>
-            <h2>{mode === 'login' ? 'Bem-vindo de volta' : 'Cadastro de fiscal'}</h2>
-            <p className="muted">
-              {mode === 'login' ? 'Acesse sua central de fiscalização.' : 'Preencha seus dados para começar.'}
-            </p>
-            <form onSubmit={submit}>
-              {mode === 'signup' && (
-                <>
-                  <label>
-                    Nome completo
-                    <input
-                      required
-                      value={form.nome}
-                      onChange={(e) => setForm({ ...form, nome: e.target.value })}
-                      placeholder="Como devemos chamar você?"
-                    />
-                  </label>
-                  <div className="two-fields">
-                    <label>
-                      Telefone
-                      <input
-                        required
-                        value={form.telefone}
-                        onChange={(e) => setForm({ ...form, telefone: e.target.value })}
-                        placeholder="(00) 00000-0000"
-                      />
-                    </label>
-                    <label>
-                      Bairro/região
-                      <input
-                        required
-                        value={form.bairro}
-                        onChange={(e) => setForm({ ...form, bairro: e.target.value })}
-                        placeholder="Sua região"
-                      />
-                    </label>
-                  </div>
-                  <label>
-                    Esspecialidade <span className="optional">opcional</span>
-                    <input
-                      value={form.especialidade}
-                      onChange={(e) => setForm({ ...form, especialidade: e.target.value })}
-                      placeholder="Ex.: obras e posturas"
-                    />
-                  </label>
-                </>
-              )}
-              <label>
-                E-mail
-                <input
-                  required
-                  type="email"
-                  value={form.email}
-                  onChange={(e) => setForm({ ...form, email: e.target.value })}
-                  placeholder="fiscal@prefeitura.gov.br"
-                />
-              </label>
-              <label>
-                Senha
-                <input
-                  required
-                  type="password"
-                  value={form.senha}
-                  onChange={(e) => setForm({ ...form, senha: e.target.value })}
-                  placeholder="Sua senha"
-                />
-              </label>
-              {message && (
-                <div className="form-message">
-                  <AlertTriangle size={16} />
-                  {message}
-                </div>
-              )}
-              <button className="primary-button full" disabled={busy}>
-                {busy ? <Loader2 className="spin" size={18} /> : mode === 'login' ? 'Entrar no SIFAU' : 'Criar acesso'}
-              </button>
-            </form>
-          </>
-        )}
+          )}
+          <button className="primary-button full" disabled={busy}>
+            {busy ? <Loader2 className="spin" size={18} /> : mode === 'login' ? 'Entrar no SIFAU' : 'Criar acesso'}
+          </button>
+        </form>
       </div>
       <small className="auth-footer">Acesso restrito a fiscais municipais</small>
     </div>

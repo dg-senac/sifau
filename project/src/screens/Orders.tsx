@@ -273,12 +273,23 @@ function OrderDetail({ order, fiscal, onClose }: { order: OrdemServico; fiscal: 
           ? `Localização confirmada: ${Math.round(dist)}m do endereço (precisão ±${Math.round(accuracy)}m).`
           : `Distância estimada: ${Math.round(dist)}m (precisão ±${Math.round(accuracy)}m). A distância mais a margem de erro precisa ser de até 100m.`);
         setChecking(false);
+        // Limpar o watch após obter a localização
+        if (watchId.current !== null) {
+          navigator.geolocation.clearWatch(watchId.current);
+          watchId.current = null;
+        }
       },
       (error) => {
         setWithinRange(false);
-        setMessage(error.code === error.PERMISSION_DENIED
-          ? 'Permita o acesso à localização para verificar a proximidade.'
-          : 'Não foi possível obter sua localização. Verifique o GPS e tente novamente.');
+        let errorMsg = 'Não foi possível obter sua localização.';
+        if (error.code === error.PERMISSION_DENIED) {
+          errorMsg = 'Permita o acesso à localização nas configurações do aparelho.';
+        } else if (error.code === error.POSITION_UNAVAILABLE) {
+          errorMsg = 'Localização indisponível. Verifique o GPS.';
+        } else if (error.code === error.TIMEOUT) {
+          errorMsg = 'Tempo esgotado ao obter localização. Tente novamente.';
+        }
+        setMessage(errorMsg);
         if (watchId.current !== null) navigator.geolocation.clearWatch(watchId.current);
         watchId.current = null;
         setChecking(false);
