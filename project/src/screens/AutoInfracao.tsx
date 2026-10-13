@@ -5,7 +5,7 @@ import { supabase } from '@/lib/supabase';
 import { Fiscal, Occurrence, SCIENCE_TYPES } from '@/lib/types';
 import { PageTitle } from '@/components/ui';
 import { SignaturePad } from '@/components/SignaturePad';
-import { enqueue } from '@/lib/offlineQueue';
+import { createQueueId, enqueue, isRecoverableSyncError } from '@/lib/offlineQueue';
 
 export function AutoInfracaoForm({
   item,
@@ -36,6 +36,7 @@ export function AutoInfracaoForm({
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
   const [done, setDone] = useState(false);
+  const [queuedOffline, setQueuedOffline] = useState(false);
   const [lastAuto, setLastAuto] = useState<Record<string, unknown> | null>(null);
 
   const submit = async (e: FormEvent) => {
@@ -53,6 +54,7 @@ export function AutoInfracaoForm({
     setMessage('');
 
     const payload = {
+      id: createQueueId(),
       ocorrencia_id: item.id,
       tipo_infracao: tipoInfracao,
       artigo_legal: artigoLegal.trim() || 'A definir',
@@ -62,16 +64,42 @@ export function AutoInfracaoForm({
       autuado_nome: autuadoNome.trim(),
       autuado_documento: autuadoDocumento.trim(),
       ciencia,
+      assinatura_autuado: signature,
       testemunha_nome: testemunhaNome.trim() || null,
       pagamento: 'Pendente',
       vencimento,
     };
 
+    const queueAuto = () => enqueue('autos_infracao', payload, `Auto de infração: ${autuadoNome}`);
     if (!navigator.onLine) {
-      enqueue('autos_infracao', payload, `Auto de infração: ${autuadoNome}`);
+      try {
+        queueAuto();
+        setQueuedOffline(true);
+      } catch (error) {
+        console.error('Não foi possível guardar o auto neste aparelho:', error);
+        setMessage('Não foi possível salvar offline. Libere espaço no aparelho e tente novamente.');
+        setSaving(false);
+        return;
+      }
     } else {
       const { error } = await supabase.from('autos_infracao').insert(payload);
-      if (error) enqueue('autos_infracao', payload, `Auto de infração: ${autuadoNome}`);
+      if (error) {
+        console.error('Erro ao registrar auto de infração:', error);
+        if (!isRecoverableSyncError(error)) {
+          setMessage('Não foi possível salvar o auto. Confira seus dados e permissões e tente novamente.');
+          setSaving(false);
+          return;
+        }
+        try {
+          queueAuto();
+          setQueuedOffline(true);
+        } catch (queueError) {
+          console.error('Não foi possível guardar o auto neste aparelho:', queueError);
+          setMessage('Não foi possível salvar offline. Libere espaço no aparelho e tente novamente.');
+          setSaving(false);
+          return;
+        }
+      }
     }
 
     setLastAuto(payload);
@@ -174,8 +202,10 @@ export function AutoInfracaoForm({
         <div className="notice-card">
           <div className="notice-icon"><CheckCircle2 size={19} /></div>
           <div>
-            <b>Auto de infração registrado</b>
-            <span>Gere o PDF agora para colher a assinatura ou compartilhar com o autuado.</span>
+            <b>{queuedOffline ? 'Auto salvo no aparelho' : 'Auto de infração registrado'}</b>
+            <span>{queuedOffline
+              ? 'Aguardando conexão para sincronizar com o Supabase. Gere o PDF e confira a fila de sincronização antes de encerrar a sessão.'
+              : 'Gere o PDF agora para colher a assinatura ou compartilhar com o autuado.'}</span>
           </div>
         </div>
         <button className="primary-button full" onClick={generatePdf}>
@@ -234,11 +264,11 @@ export function AutoInfracaoForm({
           <div className="two-fields">
             <label>
               Valor base (R$)
-              <input type="number" step="0.01" required value={valorBase} onChange={(e) => setValorBase(e.target.value)} />
+              <input type="number" step="0.01" min="0" required value={valorBase} onChange={(e) => setValorBase(e.target.value)} />
             </label>
             <label>
               Valor da multa (R$)
-              <input type="number" step="0.01" required value={valorMulta} onChange={(e) => setValorMulta(e.target.value)} />
+              <input type="number" step="0.01" min="0" required value={valorMulta} onChange={(e) => setValorMulta(e.target.value)} />
             </label>
           </div>
           <label>

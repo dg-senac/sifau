@@ -1,5 +1,5 @@
-import { Bell, ChevronRight, FileCheck2, FileText, LogOut, Map, User, Users } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
+import { Bell, ChevronRight, FileCheck2, FileText, LogOut, Map, MessageSquare, User, Users } from 'lucide-react';
+import { signOut } from '@/lib/authActions';
 import { Fiscal, Screen } from '@/lib/types';
 import { PageTitle } from '@/components/ui';
 
@@ -15,9 +15,10 @@ export function MoreScreen({
   const items: { id: Screen; label: string; desc: string; icon: typeof User; badge?: number }[] = [
     { id: 'profile', label: 'Meu perfil', desc: 'Dados pessoais e notificações', icon: User },
     { id: 'notifications', label: 'Notificações', desc: 'Atribuições, prazos e status', icon: Bell, badge: unreadCount },
+    { id: 'messages', label: 'Mensagens', desc: 'Conversa com a administração', icon: MessageSquare },
     { id: 'map', label: 'Mapa da cidade', desc: 'Ocorrências geolocalizadas', icon: Map },
-    { id: 'documents', label: 'Documentos', desc: 'Galeria de fotos e arquivos', icon: FileText },
-    { id: 'audit', label: 'Auditoria', desc: 'Histórico imutável de ações', icon: FileCheck2 },
+    { id: 'audit', label: 'Auditoria', desc: 'Histórico de ações', icon: FileCheck2 },
+    { id: 'documents', label: 'Documentos', desc: 'Fotos e arquivos de fiscalização', icon: FileText },
     { id: 'users', label: 'Fiscais cadastrados', desc: 'Equipe municipal', icon: Users },
   ];
 
@@ -44,7 +45,7 @@ export function MoreScreen({
           </button>
         ))}
       </div>
-      <button className="drawer-link logout" onClick={() => supabase.auth.signOut()}>
+      <button className="drawer-link logout" onClick={() => void signOut()}>
         <LogOut size={19} /> Encerrar sessão
       </button>
     </>

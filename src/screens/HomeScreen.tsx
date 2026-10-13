@@ -1,7 +1,6 @@
-import { FormEvent, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
-  AlertTriangle, Camera, CheckCircle2, ChevronRight, Clock3, ListFilter,
-  Loader2, MapPin, Plus, SlidersHorizontal, X,
+  ChevronRight, Clock3, ListFilter, Loader2, MapPin, Plus, SlidersHorizontal, X,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { Fiscal, Occurrence, Screen } from '@/lib/types';
@@ -25,7 +24,8 @@ export function HomeScreen({
   const [showFilters, setShowFilters] = useState(false);
   const [detail, setDetail] = useState<Occurrence | null>(null);
 
-  const load = async () => {
+  const fiscalId = fiscal?.id;
+  const load = useCallback(async () => {
     setLoading(true);
     let query = supabase.from('ocorrencias').select('*').order('created_at', { ascending: false }).limit(50);
     if (status !== 'Todos') query = query.eq('status', status);
@@ -35,19 +35,19 @@ export function HomeScreen({
     setItems(data ?? []);
     setLoading(false);
 
-    if (fiscal) {
+    if (fiscalId) {
       const { count: resolved } = await supabase
         .from('ocorrencias').select('id', { count: 'exact', head: true })
-        .eq('fiscal_designado', fiscal.id).eq('status', 'Resolvida');
+        .eq('fiscal_designado', fiscalId).eq('status', 'Resolvida');
       const { count: totalAssigned } = await supabase
         .from('ocorrencias').select('id', { count: 'exact', head: true })
-        .eq('fiscal_designado', fiscal.id);
+        .eq('fiscal_designado', fiscalId);
       setResolvedCount(resolved ?? 0);
       setCompliance(totalAssigned ? Math.round(((resolved ?? 0) / totalAssigned) * 100) : 0);
     }
-  };
+  }, [status, categoria, bairro, fiscalId]);
 
-  useEffect(() => { load(); }, [status, categoria, bairro, fiscal?.id]);
+  useEffect(() => { void load(); }, [load]);
 
   const assigned = items.filter((item) => item.fiscal_designado === fiscal?.id).length;
   const bairros = [...new Set(items.map((i) => i.bairro))];
@@ -79,9 +79,9 @@ export function HomeScreen({
           <small>no total</small>
         </div>
         <div>
-          <span>SLA</span>
+          <span>Concluídas</span>
           <b>{compliance}%</b>
-          <small>cumprimento</small>
+          <small>das atribuídas</small>
         </div>
       </section>
       <button className="new-report" onClick={() => onNavigate('new')}>

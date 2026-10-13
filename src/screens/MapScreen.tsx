@@ -58,15 +58,22 @@ export function MapScreen() {
     const markers: L.CircleMarker[] = [];
     items.forEach((item) => {
       if (item.latitude == null || item.longitude == null) return;
+      const popup = document.createElement('div');
+      const category = document.createElement('strong');
+      const neighborhood = document.createElement('span');
+      const status = document.createElement('span');
+      category.textContent = item.categoria;
+      neighborhood.textContent = item.bairro;
+      status.textContent = item.status;
+      status.style.color = '#8090a3';
+      popup.append(category, document.createElement('br'), neighborhood, document.createElement('br'), status);
       const marker = L.circleMarker([item.latitude, item.longitude], {
         radius: 8,
         color: '#fff',
         weight: 2,
         fillColor: STATUS_COLOR[item.status] ?? '#4f8fe1',
         fillOpacity: 0.95,
-      }).bindPopup(
-        `<b>${item.categoria}</b><br/>${item.bairro}<br/><span style="color:#8090a3">${item.status}</span>`,
-      );
+      }).bindPopup(popup);
       marker.addTo(map);
       markers.push(marker);
     });

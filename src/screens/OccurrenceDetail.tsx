@@ -1,9 +1,9 @@
-import { FormEvent, useEffect, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useState } from 'react';
 import {
-  AlertTriangle, Calendar, Camera, ChevronRight, Clock3, Edit2, FileText, MapPin, Navigation, Save, User, X,
+  AlertTriangle, Calendar, ChevronRight, Clock3, Edit2, FileText, MapPin, Save, User, X,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
-import { Fiscal, Occurrence, OCCURRENCE_STATUSES, Vistoria, CATEGORIES, SUBCATEGORIES, URGENCY_LEVELS } from '@/lib/types';
+import { Auditoria, Fiscal, Occurrence, OCCURRENCE_STATUSES, Vistoria, CATEGORIES, SUBCATEGORIES, URGENCY_LEVELS } from '@/lib/types';
 import { PageTitle, Badge, UrgencyBadge } from '@/components/ui';
 
 export function OccurrenceDetail({
@@ -16,7 +16,7 @@ export function OccurrenceDetail({
   onClose: () => void;
 }) {
   const [vistorias, setVistorias] = useState<Vistoria[]>([]);
-  const [auditLogs, setAuditLogs] = useState<any[]>([]);
+  const [auditLogs, setAuditLogs] = useState<Auditoria[]>([]);
   const [fiscalNome, setFiscalNome] = useState('');
   const [designadoNome, setDesignadoNome] = useState('');
   const [newStatus, setNewStatus] = useState(item.status);
@@ -36,22 +36,23 @@ export function OccurrenceDetail({
     longitude: item.longitude,
   });
 
-  const load = async () => {
+  const load = useCallback(async () => {
     const [{ data: vData }, { data: aData }, { data: fData }] = await Promise.all([
       supabase.from('vistorias').select('*').eq('ocorrencia_id', item.id).order('created_at', { ascending: false }),
       supabase.from('auditoria').select('*').eq('ocorrencia_id', item.id).order('created_at', { ascending: false }),
-      supabase.from('fiscais').select('id, nome').in('id', [item.fiscal_registrou, item.fiscal_designado ?? '']),
+      supabase.rpc('get_fiscal_directory'),
     ]);
     setVistorias(vData ?? []);
     setAuditLogs(aData ?? []);
-    const fmap = Object.fromEntries((fData ?? []).map((f) => [f.id, f.nome]));
+    const fiscalDirectory = (fData ?? []) as { id: string; nome: string }[];
+    const fmap = Object.fromEntries(fiscalDirectory.map((member) => [member.id, member.nome]));
     setFiscalNome(fmap[item.fiscal_registrou] ?? 'Fiscal');
     if (item.fiscal_designado) setDesignadoNome(fmap[item.fiscal_designado] ?? 'Fiscal');
-  };
+  }, [item.id, item.fiscal_registrou, item.fiscal_designado]);
 
   useEffect(() => {
-    load();
-  }, [item.id]);
+    void load();
+  }, [load]);
 
   const overdue = new Date(item.sla_deadline).getTime() < Date.now() && !['Resolvida', 'Arquivada'].includes(item.status);
   const slaRemaining = Math.round((new Date(item.sla_deadline).getTime() - Date.now()) / 3600000);
@@ -65,19 +66,16 @@ export function OccurrenceDetail({
     }
     setSaving(true);
     setMessage('');
-    const { error } = await supabase.from('ocorrencias').update({ status: newStatus }).eq('id', item.id);
+    const { error } = await supabase.rpc('update_occurrence_status', {
+      p_occurrence_id: item.id,
+      p_status: newStatus,
+      p_note: observacao.trim() || `Status alterado de ${item.status} para ${newStatus}`,
+    });
     if (error) {
       setMessage('Erro ao atualizar status.');
       setSaving(false);
       return;
     }
-    await supabase.from('auditoria').insert({
-      ocorrencia_id: item.id,
-      status_anterior: item.status,
-      status_novo: newStatus,
-      fiscal_id: fiscal.id,
-      observacao: observacao.trim() || `Status alterado de ${item.status} para ${newStatus}`,
-    });
     setShowStatusForm(false);
     setObservacao('');
     setSaving(false);
@@ -106,14 +104,6 @@ export function OccurrenceDetail({
       setSaving(false);
       return;
     }
-
-    await supabase.from('auditoria').insert({
-      ocorrencia_id: item.id,
-      status_anterior: item.status,
-      status_novo: item.status,
-      fiscal_id: fiscal.id,
-      observacao: 'Dados da ocorrência editados',
-    });
 
     setIsEditing(false);
     setSaving(false);
@@ -144,7 +134,7 @@ export function OccurrenceDetail({
             longitude: position.coords.longitude,
           });
         },
-        (error) => {
+        () => {
           setMessage('Não foi possível obter sua localização.');
         }
       );
@@ -301,7 +291,7 @@ export function OccurrenceDetail({
                   <b>{item.endereco}</b>
                   <span>{item.bairro}</span>
                 </div>
-                {item.latitude && item.longitude && (
+                {item.latitude != null && item.longitude != null && (
                   <div className="detail-coords">
                     <MapPin size={14} />
                     <span>{item.latitude.toFixed(5)}, {item.longitude.toFixed(5)}</span>

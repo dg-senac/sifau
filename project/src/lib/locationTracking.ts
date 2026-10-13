@@ -4,143 +4,118 @@ export interface LocationData {
   latitude: number;
   longitude: number;
   accuracy?: number;
-  battery_level?: number;
+  battery_level?: number | null;
 }
+
+type NavigatorWithBattery = Navigator & {
+  getBattery?: () => Promise<{ level: number }>;
+};
 
 class LocationTracker {
   private watchId: number | null = null;
   private intervalId: number | null = null;
   private fiscalId: string | null = null;
   private isTracking = false;
+  private lastSentAt = 0;
+  private readonly minimumSendInterval = 60_000;
 
   startTracking(fiscalId: string) {
-    if (this.isTracking) {
-      this.stopTracking();
-    }
-
+    if (this.isTracking && this.fiscalId === fiscalId) return;
+    this.stopTracking();
     this.fiscalId = fiscalId;
     this.isTracking = true;
+    this.lastSentAt = 0;
 
-    // Iniciar geolocalização em tempo real
-    if ('geolocation' in navigator) {
-      this.watchId = navigator.geolocation.watchPosition(
+    if (!('geolocation' in navigator)) {
+      console.warn('Este aparelho não disponibiliza geolocalização.');
+      return;
+    }
+
+    this.watchId = navigator.geolocation.watchPosition(
+      (position) => {
+        void this.sendLocation({
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+          accuracy: position.coords.accuracy,
+        });
+      },
+      (error) => {
+        console.warn('Não foi possível atualizar a localização do fiscal:', error.message);
+      },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 30000 },
+    );
+
+    // O watch pode parar de emitir quando o aparelho fica parado; este fallback
+    // mantém o último ponto atualizado sem gravar a mesma posição várias vezes.
+    this.intervalId = window.setInterval(() => {
+      if (!this.isTracking || !navigator.onLine) return;
+      navigator.geolocation.getCurrentPosition(
         (position) => {
-          this.sendLocation({
+          void this.sendLocation({
             latitude: position.coords.latitude,
             longitude: position.coords.longitude,
             accuracy: position.coords.accuracy,
-            battery_level: this.getBatteryLevelSync(),
           });
         },
-        (error) => {
-          console.error('Erro de geolocalização:', error);
-        },
-        {
-          enableHighAccuracy: true,
-          timeout: 10000,
-          maximumAge: 0,
-        }
+        () => undefined,
+        { enableHighAccuracy: true, timeout: 15000, maximumAge: 30000 },
       );
-    }
-
-    // Enviar localização periodicamente (backup)
-    this.intervalId = window.setInterval(() => {
-      if ('geolocation' in navigator) {
-        navigator.geolocation.getCurrentPosition(
-          (position) => {
-            this.sendLocation({
-              latitude: position.coords.latitude,
-              longitude: position.coords.longitude,
-              accuracy: position.coords.accuracy,
-              battery_level: this.getBatteryLevelSync(),
-            });
-          },
-          (error) => {
-            console.error('Erro ao obter localização periódica:', error);
-          },
-          {
-            enableHighAccuracy: true,
-            timeout: 10000,
-            maximumAge: 0,
-          }
-        );
-      }
-    }, 60000); // A cada 1 minuto
+    }, this.minimumSendInterval);
   }
 
   stopTracking() {
-    if (this.watchId !== null) {
+    if (this.watchId !== null && 'geolocation' in navigator) {
       navigator.geolocation.clearWatch(this.watchId);
-      this.watchId = null;
     }
-
-    if (this.intervalId !== null) {
-      clearInterval(this.intervalId);
-      this.intervalId = null;
-    }
-
+    if (this.intervalId !== null) window.clearInterval(this.intervalId);
+    this.watchId = null;
+    this.intervalId = null;
     this.isTracking = false;
     this.fiscalId = null;
   }
 
-  private sendLocation(location: LocationData) {
-    if (!this.fiscalId) return;
+  private async sendLocation(location: LocationData) {
+    const fiscalId = this.fiscalId;
+    if (!fiscalId || !this.isTracking || !navigator.onLine) return;
 
-    supabase.from('fiscal_location').insert({
-      fiscal_id: this.fiscalId,
-      latitude: location.latitude,
-      longitude: location.longitude,
-      accuracy: location.accuracy,
-      battery_level: location.battery_level,
-      is_online: true,
-      last_seen: new Date().toISOString(),
-    }).then(({ error }) => {
-      if (error) {
-        console.error('Erro ao enviar localização:', error);
-      }
-    });
-  }
+    const now = Date.now();
+    if (now - this.lastSentAt < this.minimumSendInterval) return;
+    this.lastSentAt = now;
 
-  private getBatteryLevelSync(): number | null {
-    if ('getBattery' in navigator) {
-      try {
-        const battery = (navigator as any).getBattery();
-        if (battery instanceof Promise) {
-          return null; // Não pode usar async aqui
-        }
-        return Math.round(battery.level * 100);
-      } catch (error) {
-        return null;
-      }
+    const batteryLevel = await this.getBatteryLevel();
+    if (!this.isTracking || this.fiscalId !== fiscalId || !navigator.onLine) return;
+
+    try {
+      const { error } = await supabase.rpc('record_fiscal_location', {
+        p_latitude: location.latitude,
+        p_longitude: location.longitude,
+        p_accuracy: location.accuracy ?? null,
+        p_battery_level: batteryLevel,
+      });
+      if (error) console.error('Erro ao enviar localização:', error.message);
+    } catch (error) {
+      console.error('Falha de rede ao enviar localização:', error);
     }
-    return null;
   }
 
   private async getBatteryLevel(): Promise<number | null> {
-    if ('getBattery' in navigator) {
-      try {
-        const battery = await (navigator as any).getBattery();
-        return Math.round(battery.level * 100);
-      } catch (error) {
-        return null;
-      }
+    const getBattery = (navigator as NavigatorWithBattery).getBattery;
+    if (!getBattery) return null;
+    try {
+      const battery = await getBattery.call(navigator);
+      return Math.round(battery.level * 100);
+    } catch {
+      return null;
     }
-    return null;
   }
 
   async markOffline() {
-    if (!this.fiscalId) return;
-
+    if (!navigator.onLine) return;
     try {
-      await supabase.from('fiscal_location').insert({
-        fiscal_id: this.fiscalId,
-        latitude: 0,
-        longitude: 0,
-        is_online: false,
-        last_seen: new Date().toISOString(),
-      });
+      const { error } = await supabase.rpc('mark_fiscal_offline');
+      if (error) console.warn('Erro ao marcar fiscal como offline:', error.message);
     } catch (error) {
-      console.error('Erro ao marcar offline:', error);
+      console.warn('Falha de rede ao marcar fiscal como offline:', error);
     }
   }
 }

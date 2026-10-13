@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useRef, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 import {
   AlertTriangle,
   ChevronRight,
@@ -10,7 +10,7 @@ import {
   X,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
-import { Fiscal, OS_ORIGINS, OS_STATUSES, OrdemServico } from '@/lib/types';
+import { AutoInfracao, Fiscal, OS_ORIGINS, OS_STATUSES, OrdemServico, Vistoria } from '@/lib/types';
 import { PageTitle, EmptyState, Badge } from '@/components/ui';
 
 export function Orders({ fiscal }: { fiscal: Fiscal | null }) {
@@ -20,18 +20,19 @@ export function Orders({ fiscal }: { fiscal: Fiscal | null }) {
   const [statusFilter, setStatusFilter] = useState('Todos');
   const [detail, setDetail] = useState<OrdemServico | null>(null);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
     let query = supabase.from('ordens_servico').select('*').order('emitida_em', { ascending: false });
     if (statusFilter !== 'Todos') query = query.eq('status', statusFilter);
-    const { data } = await query;
+    const { data, error } = await query;
+    if (error) console.error('Erro ao carregar ordens de serviço:', error.message);
     setOrders(data ?? []);
     setLoading(false);
-  };
+  }, [statusFilter]);
 
   useEffect(() => {
-    load();
-  }, [statusFilter]);
+    void load();
+  }, [load]);
 
   if (detail) {
     return <OrderDetail order={detail} fiscal={fiscal} onClose={() => { setDetail(null); load(); }} />;
@@ -229,8 +230,8 @@ function OrderForm({
 }
 
 function OrderDetail({ order, fiscal, onClose }: { order: OrdemServico; fiscal: Fiscal | null; onClose: () => void }) {
-  const [vistorias, setVistorias] = useState<any[]>([]);
-  const [autos, setAutos] = useState<any[]>([]);
+  const [vistorias, setVistorias] = useState<Vistoria[]>([]);
+  const [autos, setAutos] = useState<AutoInfracao[]>([]);
   const [withinRange, setWithinRange] = useState(false);
   const [checking, setChecking] = useState(false);
   const [message, setMessage] = useState('');

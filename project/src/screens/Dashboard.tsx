@@ -5,13 +5,23 @@ import {
   Clock3,
   Landmark,
   MapPin,
-  Search,
+  RefreshCw,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
-import { CATEGORIES, OCCURRENCE_STATUSES } from '@/lib/types';
+import { OCCURRENCE_STATUSES } from '@/lib/types';
 import { PageTitle } from '@/components/ui';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+
+type DashboardOccurrence = {
+  id: string;
+  categoria: string;
+  status: string;
+  urgencia: string;
+  latitude: number | null;
+  longitude: number | null;
+  created_at: string;
+};
 
 export function Dashboard() {
   const [stats, setStats] = useState({ total: 0, resolved: 0, overdue: 0 });
@@ -19,7 +29,8 @@ export function Dashboard() {
   const [byStatus, setByStatus] = useState<{ status: string; count: number }[]>([]);
   const [fiscalRanking, setFiscalRanking] = useState<{ nome: string; resolvidas: number; compliance: number }[]>([]);
   const [escalated, setEscalated] = useState<number>(0);
-  const [occurrences, setOccurrences] = useState<any[]>([]);
+  const [occurrences, setOccurrences] = useState<DashboardOccurrence[]>([]);
+  const [refreshKey, setRefreshKey] = useState(0);
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
 
@@ -50,7 +61,7 @@ export function Dashboard() {
         overdue: overdue.count ?? 0,
       });
 
-      setOccurrences(occData ?? []);
+      setOccurrences((occData.data ?? []) as DashboardOccurrence[]);
 
       const { data: categoryData } = await supabase.from('ocorrencias').select('categoria');
       const counts: Record<string, number> = {};
@@ -97,8 +108,9 @@ export function Dashboard() {
         setFiscalRanking([]);
         return;
       }
-      const { data: fiscais } = await supabase.from('fiscais').select('id, nome').in('id', ids);
-      const ranking = (fiscais ?? []).map((f) => ({
+      const { data: directory } = await supabase.rpc('get_fiscal_directory');
+      const fiscais = ((directory ?? []) as { id: string; nome: string }[]).filter((fiscal) => ids.includes(fiscal.id));
+      const ranking = fiscais.map((f) => ({
         nome: f.nome,
         resolvidas: byFiscal[f.id]?.resolvidas ?? 0,
         compliance: byFiscal[f.id]?.total
@@ -110,7 +122,7 @@ export function Dashboard() {
     };
 
     fetchDashboardData();
-  }, []);
+  }, [refreshKey]);
 
   useEffect(() => {
     const initMap = () => {
@@ -121,7 +133,7 @@ export function Dashboard() {
           mapInstanceRef.current.remove();
         }
 
-        const map = L.map(mapRef.current).setView([-23.5505, -46.6333], 12);
+        const map = L.map(mapRef.current).setView([-8.0476, -34.877], 12);
 
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
           attribution: '© OpenStreetMap contributors',
@@ -137,33 +149,40 @@ export function Dashboard() {
           }
         };
 
-        occurrences.forEach((occ) => {
-          const marker = L.circleMarker([occ.latitude, occ.longitude], {
+        const markers: L.CircleMarker[] = [];
+        occurrences.forEach((occurrence) => {
+          if (occurrence.latitude == null || occurrence.longitude == null) return;
+          const marker = L.circleMarker([occurrence.latitude, occurrence.longitude], {
             radius: 8,
-            fillColor: getColorByStatus(occ.status),
+            fillColor: getColorByStatus(occurrence.status),
             color: '#fff',
             weight: 2,
             opacity: 1,
             fillOpacity: 0.8,
           }).addTo(map);
 
-          marker.bindPopup(`
-            <div style="font-family: sans-serif; font-size: 12px;">
-              <strong>${occ.categoria}</strong><br/>
-              Status: ${occ.status}<br/>
-              Urgência: ${occ.urgencia}<br/>
-              <small>${new Date(occ.created_at).toLocaleDateString('pt-BR')}</small>
-            </div>
-          `);
+          const popup = document.createElement('div');
+          popup.style.fontFamily = 'sans-serif';
+          popup.style.fontSize = '12px';
+          const category = document.createElement('strong');
+          category.textContent = occurrence.categoria;
+          const date = document.createElement('small');
+          date.textContent = new Date(occurrence.created_at).toLocaleDateString('pt-BR');
+          popup.append(
+            category,
+            document.createElement('br'),
+            document.createTextNode(`Status: ${occurrence.status}`),
+            document.createElement('br'),
+            document.createTextNode(`Urgência: ${occurrence.urgencia}`),
+            document.createElement('br'),
+            date,
+          );
+          marker.bindPopup(popup);
+          markers.push(marker);
         });
 
-        if (occurrences.length > 0) {
-          const group = L.featureGroup(
-            occurrences.map((occ) =>
-              L.circleMarker([occ.latitude, occ.longitude])
-            )
-          );
-          map.fitBounds(group.getBounds().pad(0.1));
+        if (markers.length > 0) {
+          map.fitBounds(L.featureGroup(markers).getBounds().pad(0.1));
         }
 
         mapInstanceRef.current = map;
@@ -208,8 +227,8 @@ export function Dashboard() {
         eyebrow="Visão geral"
         title="Painel operacional"
         action={
-          <button className="icon-button light">
-            <Search size={19} />
+          <button className="icon-button light" onClick={() => setRefreshKey((value) => value + 1)} aria-label="Atualizar painel" title="Atualizar painel">
+            <RefreshCw size={18} />
           </button>
         }
       />

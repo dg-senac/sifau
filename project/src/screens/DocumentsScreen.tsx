@@ -1,10 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { 
   FileText, 
   Image as ImageIcon, 
   Upload, 
   Search, 
-  Filter,
   FolderOpen,
   Calendar,
   Download,
@@ -14,7 +13,6 @@ import {
   List,
   RefreshCw
 } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
 import { Fiscal, Documento } from '@/lib/types';
 import { documentsApi, fileUtils } from '@/lib/documents';
 import { DocumentGallery } from '@/components/DocumentGallery';
@@ -33,12 +31,12 @@ export function DocumentsScreen({ fiscal }: { fiscal: Fiscal | null }) {
   const [selectedDoc, setSelectedDoc] = useState<Documento | null>(null);
   const [uploading, setUploading] = useState(false);
 
-  useEffect(() => {
-    loadDocuments();
-  }, [fiscal]);
-
-  const loadDocuments = async () => {
-    if (!fiscal) return;
+  const loadDocuments = useCallback(async () => {
+    if (!fiscal) {
+      setDocumentos([]);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     try {
       const data = await documentsApi.getByFiscal(fiscal.id);
@@ -48,7 +46,11 @@ export function DocumentsScreen({ fiscal }: { fiscal: Fiscal | null }) {
     } finally {
       setLoading(false);
     }
-  };
+  }, [fiscal]);
+
+  useEffect(() => {
+    void loadDocuments();
+  }, [loadDocuments]);
 
   const handleUpload = async (files: File[]) => {
     if (!fiscal) return;
@@ -57,8 +59,11 @@ export function DocumentsScreen({ fiscal }: { fiscal: Fiscal | null }) {
     try {
       for (const file of files) {
         // Validar tamanho antes de processar
-        if (!fileUtils.validateFileSize(file, 10)) {
-          throw new Error(`Arquivo "${file.name}" excede o limite de 10MB`);
+        if (!fileUtils.validateFileSize(file, 5)) {
+          throw new Error(`Arquivo "${file.name}" excede o limite de 5MB`);
+        }
+        if (!fileUtils.validateFileType(file)) {
+          throw new Error(`Tipo de arquivo não permitido: ${file.name}`);
         }
 
         const base64 = await fileUtils.fileToBase64(file, true);
@@ -277,14 +282,19 @@ export function DocumentsScreen({ fiscal }: { fiscal: Fiscal | null }) {
         <label className="upload-zone">
           <Upload size={24} />
           <div>
-            <strong>Arraste arquivos ou clique para upload</strong>
-            <span>Imagens, PDFs, documentos</span>
+            <strong>{uploading ? 'Enviando arquivos…' : 'Arraste arquivos ou clique para upload'}</strong>
+            <span>JPG, PNG, WebP, PDF ou Word · até 5 MB por arquivo</span>
           </div>
           <input
             type="file"
             multiple
-            accept="image/*,.pdf,.doc,.docx"
-            onChange={(e) => handleUpload(Array.from(e.target.files || []))}
+            disabled={uploading}
+            accept="image/jpeg,image/png,image/webp,.pdf,.doc,.docx"
+            onChange={async (event) => {
+              const input = event.currentTarget;
+              await handleUpload(Array.from(input.files ?? []));
+              input.value = '';
+            }}
             style={{ display: 'none' }}
           />
         </label>
@@ -328,7 +338,7 @@ export function DocumentsScreen({ fiscal }: { fiscal: Fiscal | null }) {
             
             <div className="modal-content">
               {selectedDoc.tipo_documento === 'foto' || selectedDoc.arquivo_tipo?.startsWith('image/') ? (
-                <img src={selectedDoc.arquivo_data} alt={selectedDoc.titulo} />
+                <img src={selectedDoc.arquivo_data} alt={selectedDoc.titulo ?? 'Documento'} />
               ) : (
                 <div className="document-preview">
                   <FileText size={48} />

@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { Search, Users } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
+import { AlertCircle, Search, Users } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { Fiscal } from '@/lib/types';
 import { PageTitle } from '@/components/ui';
@@ -7,46 +7,44 @@ import { PageTitle } from '@/components/ui';
 export function UsersScreen({ currentFiscal }: { currentFiscal: Fiscal | null }) {
   const [users, setUsers] = useState<Fiscal[]>([]);
   const [search, setSearch] = useState('');
+  const [error, setError] = useState('');
 
-  const load = async () => {
-    const { data } = await supabase.from('fiscais').select('*').order('nome');
-    setUsers(data ?? []);
-  };
-
-  useEffect(() => {
-    load();
+  const load = useCallback(async () => {
+    setError('');
+    const { data, error: loadError } = await supabase.rpc('get_fiscal_directory');
+    if (loadError) {
+      console.error('Erro ao carregar o diretório de fiscais:', loadError);
+      setError('Não foi possível carregar a equipe. Verifique sua conexão e permissões.');
+      return;
+    }
+    setUsers((data ?? []) as Fiscal[]);
   }, []);
 
-  const filtered = users.filter(
-    (u) =>
-      u.nome.toLowerCase().includes(search.toLowerCase()) ||
-      u.bairro.toLowerCase().includes(search.toLowerCase()),
-  );
+  useEffect(() => { void load(); }, [load]);
 
-  const toggle = async (user: Fiscal) => {
-    await supabase.from('fiscais').update({ ativo: !user.ativo }).eq('id', user.id);
-    load();
-  };
+  const normalizedSearch = search.trim().toLocaleLowerCase('pt-BR');
+  const filtered = users.filter((user) =>
+    user.nome.toLocaleLowerCase('pt-BR').includes(normalizedSearch) ||
+    user.bairro.toLocaleLowerCase('pt-BR').includes(normalizedSearch),
+  );
 
   return (
     <>
       <PageTitle
         eyebrow="Equipe municipal"
         title="Fiscais cadastrados"
-        action={
-          <span className="count-chip">
-            <Users size={15} /> {users.length}
-          </span>
-        }
+        action={<span className="count-chip"><Users size={15} /> {users.length}</span>}
       />
       <div className="search-box">
         <Search size={17} />
         <input
           placeholder="Buscar fiscal por nome ou região"
           value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          onChange={(event) => setSearch(event.target.value)}
+          aria-label="Buscar fiscal por nome ou região"
         />
       </div>
+      {error && <div className="form-message" role="alert"><AlertCircle size={16} />{error}</div>}
       <div className="user-list">
         {filtered.map((user) => (
           <article className="user-card" key={user.id}>
@@ -56,19 +54,16 @@ export function UsersScreen({ currentFiscal }: { currentFiscal: Fiscal | null })
                 {user.nome}
                 {user.id === currentFiscal?.id && <span className="you-tag">Você</span>}
               </b>
-              <span>
-                {user.bairro} · {user.especialidade ?? 'Fiscal geral'}
-              </span>
+              <span>{user.bairro} · {user.especialidade ?? 'Fiscal geral'}</span>
             </div>
-            <button
-              className={`toggle ${user.ativo ? 'on' : ''}`}
-              onClick={() => toggle(user)}
-              aria-label={user.ativo ? 'Desativar fiscal' : 'Ativar fiscal'}
-            >
-              <i />
-            </button>
+            <span className={`status-pill ${user.ativo ? 'active' : 'inactive'}`}>
+              {user.ativo ? 'Ativo' : 'Pendente'}
+            </span>
           </article>
         ))}
+        {!error && filtered.length === 0 && (
+          <div className="empty-state"><Users size={26} /><b>Nenhum fiscal encontrado</b><span>Ajuste o termo da busca.</span></div>
+        )}
       </div>
     </>
   );

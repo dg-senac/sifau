@@ -1,7 +1,6 @@
 import { FormEvent, useState } from 'react';
 import { AlertTriangle, Loader2, ShieldCheck } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
-import { isAdminCredentials } from '@/config/admin';
 
 type AuthErrorDetails = {
   code?: string;
@@ -76,7 +75,7 @@ function getAuthErrorMessage(error: AuthErrorDetails) {
   return 'Não foi possível concluir a solicitação. Tente novamente.';
 }
 
-export function AuthScreen({ onAdmin }: { onAdmin?: () => void } = {}) {
+export function AuthScreen() {
   const [mode, setMode] = useState<'login' | 'signup'>('login');
   const [form, setForm] = useState({
     nome: '',
@@ -93,7 +92,7 @@ export function AuthScreen({ onAdmin }: { onAdmin?: () => void } = {}) {
     event.preventDefault();
     setMessage('');
 
-    const email = form.email.trim();
+    const email = form.email.trim().toLowerCase();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       setMessage('Informe um endereço de e-mail válido.');
       return;
@@ -107,8 +106,8 @@ export function AuthScreen({ onAdmin }: { onAdmin?: () => void } = {}) {
         setMessage('Preencha nome, telefone e bairro/região.');
         return;
       }
-      if (form.senha.length < 6) {
-        setMessage('A senha precisa ter pelo menos 6 caracteres.');
+      if (form.senha.length < 12) {
+        setMessage('A senha precisa ter pelo menos 12 caracteres.');
         return;
       }
     }
@@ -116,37 +115,18 @@ export function AuthScreen({ onAdmin }: { onAdmin?: () => void } = {}) {
     setBusy(true);
     try {
       if (mode === 'login') {
-        // Verificar primeiro se são credenciais de admin locais
-        if (isAdminCredentials(email, form.senha)) {
-          if (onAdmin) {
-            onAdmin();
-            setMessage('');
-          } else {
-            setMessage('Acesso de administrador não disponível neste contexto.');
-          }
-          setBusy(false);
-          return;
-        }
-
-        // Se não for admin, fazer login normal no Supabase
-        const { data, error } = await supabase.auth.signInWithPassword({
+        const { error } = await supabase.auth.signInWithPassword({
           email,
           password: form.senha,
         });
         if (error) {
           logAuthError('login', error, [email, form.senha]);
           setMessage(getAuthErrorMessage(error));
-        } else if (data.user) {
-          // Verificar se é administrador via Supabase (para casos antigos)
-          const { data: isAdmin } = await supabase.rpc('is_admin');
-          if (isAdmin && onAdmin) {
-            onAdmin();
-          }
         }
         return;
       }
 
-      // Modo signup - criar usuário sem confirmação de email
+      // O trigger do banco cria o perfil fiscal como pendente de aprovação.
       const { data, error } = await supabase.auth.signUp({
         email,
         password: form.senha,
@@ -164,34 +144,10 @@ export function AuthScreen({ onAdmin }: { onAdmin?: () => void } = {}) {
         setMessage(getAuthErrorMessage(error));
       } else if (!data.user) {
         setMessage('Não foi possível confirmar a criação da conta. Tente novamente.');
+      } else if (!data.session) {
+        setMessage('Cadastro recebido. Confirme seu e-mail, se solicitado, e aguarde a aprovação de um administrador.');
       } else {
-        // Criar perfil fiscal após cadastro
-        const { error: fiscalError } = await supabase
-          .from('fiscais')
-          .insert({
-            id: data.user.id,
-            email: data.user.email || email,
-            nome: form.nome.trim(),
-            telefone: form.telefone.trim(),
-            bairro: form.bairro.trim(),
-            especialidade: form.especialidade.trim() || null,
-            ativo: true,
-          });
-
-        if (fiscalError) {
-          logAuthError('criação do perfil fiscal', fiscalError, [email]);
-          setMessage('Conta criada, mas houve um erro ao criar seu perfil. Tente entrar ou procure o suporte.');
-        } else {
-          // Fazer login automático após cadastro
-          const { error: loginError } = await supabase.auth.signInWithPassword({
-            email,
-            password: form.senha,
-          });
-          if (loginError) {
-            logAuthError('login após cadastro', loginError, [email, form.senha]);
-            setMessage('✅ Conta criada com sucesso! Faça login para entrar.');
-          }
-        }
+        setMessage('Cadastro recebido. Seu acesso será liberado após a aprovação de um administrador.');
       }
     } catch (error) {
       logAuthError(mode === 'login' ? 'login' : 'cadastro', error, [email, form.senha]);
@@ -262,7 +218,7 @@ export function AuthScreen({ onAdmin }: { onAdmin?: () => void } = {}) {
                 </label>
               </div>
               <label>
-                Esspecialidade <span className="optional">opcional</span>
+                Especialidade <span className="optional">opcional</span>
                 <input
                   value={form.especialidade}
                   onChange={(e) => setForm({ ...form, especialidade: e.target.value })}
