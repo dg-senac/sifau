@@ -12,8 +12,8 @@ export function SyncBanner() {
 
   const syncNow = async () => {
     setSyncing(true);
-    await flushQueue();
-    setSyncing(false);
+    try { await flushQueue(); }
+    finally { setSyncing(false); }
   };
 
   return (

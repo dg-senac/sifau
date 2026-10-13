@@ -1,22 +1,24 @@
-import { ReactNode, useEffect, useState } from 'react';
+import { ReactNode, useState } from 'react';
 import {
   Bell,
   Loader2,
   LogOut,
   Menu as MenuIcon,
   MapPinned,
+  MessageSquare,
   Plus,
   FileCheck2,
+  FileText,
   ShieldCheck,
   UserCog,
   Users,
   X,
 } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
+import { signOut } from '@/lib/authActions';
 import { Fiscal, Screen } from '@/lib/types';
 import { SyncBanner } from '@/components/SyncBanner';
 
-const MORE_GROUP: Screen[] = ['more', 'profile', 'notifications', 'map', 'users', 'audit'];
+const MORE_GROUP: Screen[] = ['more', 'profile', 'notifications', 'messages', 'map', 'users', 'audit', 'documents'];
 
 export function AppShell({
   fiscal,
@@ -114,8 +116,14 @@ export function AppShell({
               <Bell size={19} /> Notificações
               {unreadCount > 0 && <span className="count-chip">{unreadCount}</span>}
             </button>
+            <button className="drawer-link" onClick={() => change('messages')}>
+              <MessageSquare size={19} /> Mensagens
+            </button>
             <button className="drawer-link" onClick={() => change('audit')}>
               <FileCheck2 size={19} /> Auditoria
+            </button>
+            <button className="drawer-link" onClick={() => change('documents')}>
+              <FileText size={19} /> Documentos
             </button>
             <button className="drawer-link" onClick={() => change('users')}>
               <Users size={19} /> Fiscais cadastrados
@@ -123,7 +131,7 @@ export function AppShell({
             <button className="drawer-link" onClick={() => change('profile')}>
               <UserCog size={19} /> Meu perfil
             </button>
-            <button className="drawer-link logout" onClick={() => supabase.auth.signOut()}>
+            <button className="drawer-link logout" onClick={() => void signOut()}>
               <LogOut size={19} /> Encerrar sessão
             </button>
           </aside>
@@ -140,27 +148,4 @@ export function LoadingScreen({ message }: { message: string }) {
       <span>{message}</span>
     </div>
   );
-}
-
-export function useSession() {
-  const [session, setSession] =
-    useState<Awaited<ReturnType<typeof supabase.auth.getSession>>['data']['session']>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    const fetchSession = async () => {
-      const { data } = await supabase.auth.getSession();
-      setSession(data.session);
-      setLoading(false);
-    };
-
-    fetchSession();
-
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
-      setSession(nextSession);
-    });
-    return () => listener.subscription.unsubscribe();
-  }, []);
-
-  return { session, loading };
 }

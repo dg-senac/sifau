@@ -239,5 +239,5 @@ BEGIN
 END;
 $$;
 
--- Dar permissão de execução para usuários autenticados
-GRANT EXECUTE ON FUNCTION public.wipe_user_data(uuid) TO authenticated;
+-- A função legada não pode ser chamada por clientes; a migration de hardening a remove.
+REVOKE ALL ON FUNCTION public.wipe_user_data(uuid) FROM PUBLIC, anon, authenticated;

@@ -1,26 +1,29 @@
-import { BarChart3, ClipboardList, FileText, Home as HomeIcon, Menu as MenuIcon, Plus } from 'lucide-react';
-import { useEffect, useState } from 'react';
-import { supabase } from '@/lib/supabase';
+import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
+import { BarChart3, ClipboardList, FileText, Home as HomeIcon, Menu as MenuIcon } from 'lucide-react';
+import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 import { Fiscal, Screen } from '@/lib/types';
-import { AppShell, useSession } from '@/components/AppShell';
-import { LoadingScreen } from '@/components/AppShell';
+import { AppShell, LoadingScreen } from '@/components/AppShell';
+import { useSession } from '@/lib/useSession';
+import { signOut } from '@/lib/authActions';
 import { AuthScreen } from '@/screens/AuthScreen';
 import { HomeScreen } from '@/screens/HomeScreen';
 import { NewOccurrence } from '@/screens/NewOccurrence';
 import { Inspection } from '@/screens/Inspection';
-import { Dashboard } from '@/screens/Dashboard';
-import { Orders } from '@/screens/Orders';
-import { Audit } from '@/screens/Audit';
-import { UsersScreen } from '@/screens/UsersScreen';
-import { MoreScreen } from '@/screens/MoreScreen';
-import { ProfileScreen } from '@/screens/ProfileScreen';
-import { NotificationsScreen } from '@/screens/NotificationsScreen';
-import { MapScreen } from '@/screens/MapScreen';
-import { AdminScreen } from '@/screens/AdminScreen';
-import { DocumentsScreen } from '@/screens/DocumentsScreen';
-import { startAutoSync } from '@/lib/offlineQueue';
-import { registerPush } from '@/lib/push';
+import { isRecoverableSyncError, setQueueUser, startAutoSync } from '@/lib/offlineQueue';
+import { registerPush, unregisterPush } from '@/lib/push';
 import { locationTracker } from '@/lib/locationTracking';
+
+const Dashboard = lazy(() => import('@/screens/Dashboard').then((module) => ({ default: module.Dashboard })));
+const Orders = lazy(() => import('@/screens/Orders').then((module) => ({ default: module.Orders })));
+const Audit = lazy(() => import('@/screens/Audit').then((module) => ({ default: module.Audit })));
+const UsersScreen = lazy(() => import('@/screens/UsersScreen').then((module) => ({ default: module.UsersScreen })));
+const MoreScreen = lazy(() => import('@/screens/MoreScreen').then((module) => ({ default: module.MoreScreen })));
+const ProfileScreen = lazy(() => import('@/screens/ProfileScreen').then((module) => ({ default: module.ProfileScreen })));
+const NotificationsScreen = lazy(() => import('@/screens/NotificationsScreen').then((module) => ({ default: module.NotificationsScreen })));
+const MessagesScreen = lazy(() => import('@/screens/MessagesScreen').then((module) => ({ default: module.MessagesScreen })));
+const MapScreen = lazy(() => import('@/screens/MapScreen').then((module) => ({ default: module.MapScreen })));
+const AdminScreen = lazy(() => import('@/screens/AdminScreen').then((module) => ({ default: module.AdminScreen })));
+const DocumentsScreen = lazy(() => import('@/screens/DocumentsScreen').then((module) => ({ default: module.DocumentsScreen })));
 
 const navItems: { id: Screen; label: string; icon: typeof HomeIcon }[] = [
   { id: 'home', label: 'Início', icon: HomeIcon },
@@ -30,158 +33,254 @@ const navItems: { id: Screen; label: string; icon: typeof HomeIcon }[] = [
   { id: 'more', label: 'Mais', icon: MenuIcon },
 ];
 
+type AccessState = 'idle' | 'checking' | 'allowed' | 'pending' | 'banned' | 'error';
+
 function App() {
   const { session, loading } = useSession();
   const [screen, setScreen] = useState<Screen>('home');
   const [fiscal, setFiscal] = useState<Fiscal | null>(null);
   const [unreadCount, setUnreadCount] = useState(0);
   const [isAdmin, setIsAdmin] = useState(false);
-  const [localAdmin, setLocalAdmin] = useState(false);
+  const [accessState, setAccessState] = useState<AccessState>('idle');
 
-  const loadFiscal = () => {
-    if (!session) {
+  useEffect(() => {
+    const userId = session?.user.id;
+    if (!userId) {
+      setAccessState('idle');
+      setIsAdmin(false);
       setFiscal(null);
       return;
     }
 
-    const fetchFiscal = async () => {
-      const { data, error } = await supabase
-        .from('fiscais')
-        .select('*')
-        .eq('id', session.user.id)
-        .maybeSingle();
+    let cancelled = false;
+    let checkingAccess = false;
+    let lastVerifiedAllowed = false;
+    let lastVerifiedAdmin = false;
+    setAccessState('checking');
 
-      if (data) {
-        setFiscal(data);
-      } else if (error) {
-        console.error('Erro ao carregar fiscal:', error);
-      } else {
-        // Perfil não existe - tentar criar automaticamente
-        const { error: insertError } = await supabase
-          .from('fiscais')
-          .insert({
-            id: session.user.id,
-            email: session.user.email || '',
-            nome: session.user.user_metadata?.nome || session.user.email?.split('@')[0] || 'Fiscal',
-            telefone: session.user.user_metadata?.telefone || '',
-            bairro: session.user.user_metadata?.bairro || '',
-            especialidade: session.user.user_metadata?.especialidade || null,
-            ativo: true,
-          });
-
-        if (insertError) {
-          console.error('Erro ao criar perfil fiscal automaticamente:', insertError);
-        } else {
-          // Tentar carregar novamente após inserção
-          const { data: newData } = await supabase
-            .from('fiscais')
-            .select('*')
-            .eq('id', session.user.id)
-            .maybeSingle();
-          setFiscal(newData);
+    const verifyAccess = async () => {
+      if (checkingAccess || cancelled) return;
+      checkingAccess = true;
+      try {
+        const { data: adminResult, error: adminError } = await supabase.rpc('is_admin');
+        if (cancelled) return;
+        if (adminError) {
+          console.error('Não foi possível verificar o perfil administrativo:', adminError);
+          if (!lastVerifiedAllowed || !isRecoverableSyncError(adminError)) setAccessState('error');
+          return;
         }
-      }
-    };
+        if (adminResult) {
+          lastVerifiedAllowed = true;
+          lastVerifiedAdmin = true;
+          setIsAdmin(true);
+          setAccessState('allowed');
+          return;
+        }
 
-    fetchFiscal();
-  };
-
-  useEffect(loadFiscal, [session]);
-
-  useEffect(() => {
-    const checkAdmin = async () => {
-      if (!session) {
+        if (lastVerifiedAdmin) lastVerifiedAllowed = false;
+        lastVerifiedAdmin = false;
         setIsAdmin(false);
-        return;
+        const [{ data: banned, error: banError }, { data: active, error: activeError }] = await Promise.all([
+          supabase.rpc('is_user_banned'),
+          supabase.rpc('is_active_fiscal'),
+        ]);
+        if (cancelled) return;
+        if (banError || activeError) {
+          const accessError = banError ?? activeError;
+          console.error('Não foi possível verificar o acesso do fiscal:', accessError);
+          if (!lastVerifiedAllowed || !isRecoverableSyncError(accessError)) setAccessState('error');
+        } else if (banned) {
+          lastVerifiedAllowed = false;
+          setAccessState('banned');
+        } else if (active) {
+          lastVerifiedAllowed = true;
+          setAccessState('allowed');
+        } else {
+          lastVerifiedAllowed = false;
+          setAccessState('pending');
+        }
+      } catch (error) {
+        console.error('Não foi possível verificar o acesso:', error);
+        if (!lastVerifiedAllowed || !isRecoverableSyncError(error)) setAccessState('error');
+      } finally {
+        checkingAccess = false;
       }
-      const { data } = await supabase.rpc('is_admin');
-      setIsAdmin(data || false);
     };
 
-    checkAdmin();
-  }, [session]);
+    void verifyAccess();
+    const intervalId = window.setInterval(() => {
+      if (!document.hidden) void verifyAccess();
+    }, 60000);
+    const verifyOnFocus = () => { void verifyAccess(); };
+    window.addEventListener('focus', verifyOnFocus);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+      window.removeEventListener('focus', verifyOnFocus);
+    };
+  }, [session?.user.id]);
 
-  // Iniciar tracking de localização quando fiscal estiver logado
-  useEffect(() => {
-    if (fiscal && !isAdmin) {
-      locationTracker.startTracking(fiscal.id);
-    } else {
-      locationTracker.stopTracking();
+  const sessionUserId = session?.user.id;
+  const loadFiscal = useCallback(async () => {
+    if (!sessionUserId || accessState !== 'allowed') {
+      setFiscal(null);
+      return;
     }
 
-    return () => {
+    const { data, error } = await supabase
+      .from('fiscais')
+      .select('*')
+      .eq('id', sessionUserId)
+      .maybeSingle();
+
+    if (error) {
+      console.error('Erro ao carregar fiscal:', error);
+      return;
+    }
+    setFiscal(data);
+  }, [sessionUserId, accessState]);
+
+  useEffect(() => { void loadFiscal(); }, [loadFiscal]);
+
+  useEffect(() => {
+    if (isAdmin) setScreen('admin');
+    else if (screen === 'admin') setScreen('home');
+  }, [isAdmin, screen]);
+
+  useEffect(() => {
+    setQueueUser(session?.user.id ?? null);
+  }, [session?.user.id]);
+
+  useEffect(() => startAutoSync(), []);
+
+  useEffect(() => {
+    const fiscalId = fiscal?.id;
+    if (accessState === 'allowed' && fiscalId && !isAdmin) {
+      void registerPush(fiscalId);
+      return;
+    }
+    void unregisterPush();
+  }, [accessState, fiscal?.id, isAdmin]);
+
+  useEffect(() => {
+    const fiscalId = fiscal?.id;
+    if (accessState !== 'allowed' || !fiscalId || isAdmin) {
+      locationTracker.stopTracking();
+      return;
+    }
+
+    const start = () => {
+      if (!document.hidden) locationTracker.startTracking(fiscalId);
+    };
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        void locationTracker.markOffline();
+        locationTracker.stopTracking();
+      } else {
+        start();
+      }
+    };
+    const handleBeforeUnload = () => {
+      void locationTracker.markOffline();
       locationTracker.stopTracking();
     };
-  }, [fiscal, isAdmin]);
 
-  // Marcar offline quando sair da página
-  useEffect(() => {
-    const handleBeforeUnload = () => {
-      if (fiscal && !isAdmin) {
-        locationTracker.markOffline();
-      }
-    };
-
-    const handleVisibilityChange = () => {
-      if (document.hidden && fiscal && !isAdmin) {
-        locationTracker.markOffline();
-      }
-    };
-
-    window.addEventListener('beforeunload', handleBeforeUnload);
+    start();
     document.addEventListener('visibilitychange', handleVisibilityChange);
-
+    window.addEventListener('beforeunload', handleBeforeUnload);
     return () => {
-      window.removeEventListener('beforeunload', handleBeforeUnload);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      void locationTracker.markOffline();
+      locationTracker.stopTracking();
     };
-  }, [fiscal, isAdmin]);
-
-  useEffect(() => { startAutoSync(); }, []);
-
-  useEffect(() => {
-    if (fiscal) registerPush(fiscal.id);
-  }, [fiscal?.id]);
+  }, [accessState, fiscal?.id, isAdmin]);
 
   useEffect(() => {
     try {
-      if (localStorage.getItem('sifau-open-notifications')) {
+      if (accessState === 'allowed' && localStorage.getItem('sifau-open-notifications')) {
         localStorage.removeItem('sifau-open-notifications');
         setScreen('notifications');
       }
-    } catch (e) {
-      console.error('Erro ao acessar localStorage:', e);
+    } catch (error) {
+      console.error('Erro ao acessar localStorage:', error);
     }
-  }, [fiscal]);
+  }, [accessState]);
 
   useEffect(() => {
-    if (!fiscal) {
+    const fiscalId = fiscal?.id;
+    if (accessState !== 'allowed' || !fiscalId || isAdmin) {
       setUnreadCount(0);
       return;
     }
+
     const refreshUnread = async () => {
-      const { count } = await supabase
+      const { count, error } = await supabase
         .from('notificacoes')
         .select('id', { count: 'exact', head: true })
-        .eq('fiscal_id', fiscal.id)
+        .eq('fiscal_id', fiscalId)
         .eq('lida', false);
+      if (error) {
+        console.error('Erro ao consultar notificações não lidas:', error);
+        return;
+      }
       setUnreadCount(count ?? 0);
     };
-    refreshUnread();
+
+    void refreshUnread();
     const channel = supabase
-      .channel(`unread-${fiscal.id}`)
+      .channel(`unread-${fiscalId}`)
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'notificacoes', filter: `fiscal_id=eq.${fiscal.id}` },
-        refreshUnread,
+        { event: '*', schema: 'public', table: 'notificacoes', filter: `fiscal_id=eq.${fiscalId}` },
+        () => { void refreshUnread(); },
       )
       .subscribe();
-    return () => { supabase.removeChannel(channel); };
-  }, [fiscal?.id]);
+    return () => { void supabase.removeChannel(channel); };
+  }, [accessState, fiscal?.id, isAdmin]);
+
+  if (!isSupabaseConfigured) {
+    return (
+      <div className="auth-page">
+        <div className="auth-card">
+          <h1>Configuração necessária</h1>
+          <p className="muted">O SIFAU precisa das credenciais públicas do projeto Supabase para iniciar.</p>
+          <ol>
+            <li>Copie <code>.env.example</code> para <code>.env</code>.</li>
+            <li>Preencha <code>VITE_SUPABASE_URL</code> e <code>VITE_SUPABASE_ANON_KEY</code>.</li>
+            <li>Reinicie o servidor de desenvolvimento.</li>
+          </ol>
+          <p className="muted">Nunca use a chave <code>service_role</code> no aplicativo.</p>
+        </div>
+      </div>
+    );
+  }
 
   if (loading) return <LoadingScreen message="Carregando SIFAU" />;
-  if (!session) return <AuthScreen onAdmin={() => { setLocalAdmin(true); setScreen('admin'); }} />;
-  if ((isAdmin || localAdmin) && screen === 'home') setScreen('admin');
+  if (!session) return <AuthScreen />;
+  if (accessState === 'checking' || accessState === 'idle') return <LoadingScreen message="Verificando permissões" />;
+  if (accessState === 'pending' || accessState === 'banned' || accessState === 'error') {
+    const title = accessState === 'pending'
+      ? 'Acesso aguardando aprovação'
+      : accessState === 'banned'
+        ? 'Acesso suspenso'
+        : 'Não foi possível verificar seu acesso';
+    const message = accessState === 'pending'
+      ? 'Seu cadastro foi recebido. Um administrador precisa ativar o perfil antes de você acessar os dados operacionais.'
+      : accessState === 'banned'
+        ? 'Sua conta está suspensa. Entre em contato com a administração do sistema.'
+        : 'Verifique se as migrations mais recentes do Supabase foram aplicadas e tente novamente.';
+
+    return (
+      <div className="auth-page">
+        <div className="auth-card">
+          <h1>{title}</h1>
+          <p className="muted">{message}</p>
+          <button className="ghost-button full" onClick={() => void signOut()}>Encerrar sessão</button>
+        </div>
+      </div>
+    );
+  }
 
   const renderScreen = () => {
     switch (screen) {
@@ -203,12 +302,14 @@ function App() {
         return <ProfileScreen fiscal={fiscal} onUpdated={loadFiscal} />;
       case 'notifications':
         return <NotificationsScreen fiscal={fiscal} />;
+      case 'messages':
+        return <MessagesScreen fiscal={fiscal} />;
       case 'map':
         return <MapScreen />;
-      case 'admin':
-        return <AdminScreen />;
       case 'documents':
         return <DocumentsScreen fiscal={fiscal} />;
+      case 'admin':
+        return isAdmin ? <AdminScreen /> : <HomeScreen fiscal={fiscal} onNavigate={setScreen} />;
       default:
         return <HomeScreen fiscal={fiscal} onNavigate={setScreen} />;
     }
@@ -222,7 +323,9 @@ function App() {
       navItems={navItems}
       unreadCount={unreadCount}
     >
-      {renderScreen()}
+      <Suspense fallback={<LoadingScreen message="Carregando tela" />}>
+        {renderScreen()}
+      </Suspense>
     </AppShell>
   );
 }

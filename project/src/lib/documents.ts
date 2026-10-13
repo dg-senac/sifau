@@ -1,5 +1,5 @@
 import { supabase } from './supabase';
-import { Documento, AssinaturaDigital } from './types';
+import { Documento } from './types';
 
 // Funções para gerenciar documentos
 export const documentsApi = {
@@ -92,7 +92,9 @@ export const documentsApi = {
       supabase.from('documentos').update({ ordem }).eq('id', id)
     );
     
-    await Promise.all(updates);
+    const results = await Promise.all(updates);
+    const failedUpdate = results.find((result) => result.error)?.error;
+    if (failedUpdate) throw failedUpdate;
   },
 
   // Buscar documento por ID
@@ -108,147 +110,22 @@ export const documentsApi = {
   },
 };
 
-// Funções para gerenciar assinaturas digitais
-export const signaturesApi = {
-  // Criar assinatura digital
-  async create(assinatura: Omit<AssinaturaDigital, 'id' | 'criado_em'>) {
-    // Gerar hash do documento se fornecido
-    let hashDocumento = assinatura.hash_documento;
-    if (assinatura.documento_id && !hashDocumento) {
-      const documento = await documentsApi.getById(assinatura.documento_id);
-      hashDocumento = await this.generateHash(documento.arquivo_data);
-    }
-
-    // Validar certificado se fornecido
-    let certificadoValido = assinatura.certificado_valido;
-    if (assinatura.certificado_digital && !certificadoValido) {
-      const { data, error } = await supabase.rpc('validar_certificado_digital', {
-        p_certificado: assinatura.certificado_digital,
-        p_emissor: assinatura.certificado_emissor,
-        p_validade_inicio: assinatura.certificado_validade_inicio,
-        p_validade_fim: assinatura.certificado_validade_fim,
-      });
-      
-      if (!error) {
-        certificadoValido = data;
-      }
-    }
-
-    const { data, error } = await supabase
-      .from('assinaturas_digitais')
-      .insert({
-        ...assinatura,
-        hash_documento: hashDocumento,
-        certificado_valido: certificadoValido,
-      })
-      .select()
-      .single();
-    
-    if (error) throw error;
-    return data as AssinaturaDigital;
-  },
-
-  // Buscar assinaturas por fiscal
-  async getByFiscal(fiscalId: string) {
-    const { data, error } = await supabase
-      .from('assinaturas_digitais')
-      .select('*')
-      .eq('fiscal_id', fiscalId)
-      .order('criado_em', { ascending: false });
-    
-    if (error) throw error;
-    return data as AssinaturaDigital[];
-  },
-
-  // Buscar assinaturas por documento
-  async getByDocumento(documentoId: string) {
-    const { data, error } = await supabase
-      .from('assinaturas_digitais')
-      .select('*')
-      .eq('documento_id', documentoId)
-      .order('criado_em', { ascending: false });
-    
-    if (error) throw error;
-    return data as AssinaturaDigital[];
-  },
-
-  // Validar assinatura
-  async validate(assinaturaId: string) {
-    const { data, error } = await supabase
-      .from('assinaturas_digitais')
-      .select('*')
-      .eq('id', assinaturaId)
-      .single();
-    
-    if (error) throw error;
-    
-    const assinatura = data as AssinaturaDigital;
-    
-    // Verificar certificado
-    if (assinatura.certificado_digital) {
-      const { data: valid, error: validationError } = await supabase.rpc('validar_certificado_digital', {
-        p_certificado: assinatura.certificado_digital,
-        p_emissor: assinatura.certificado_emissor,
-        p_validade_inicio: assinatura.certificado_validade_inicio,
-        p_validade_fim: assinatura.certificado_validade_fim,
-      });
-      
-      if (validationError) throw validationError;
-      
-      return {
-        isValid: valid,
-        certificadoValido: valid,
-        assinatura,
-      };
-    }
-    
-    return {
-      isValid: true,
-      certificadoValido: false,
-      assinatura,
-    };
-  },
-
-  // Gerar hash do documento
-  async generateHash(data: string) {
-    const { data: hash, error } = await supabase.rpc('gerar_hash_documento', {
-      p_data: data,
-    });
-    
-    if (error) throw error;
-    return hash as string;
-  },
-
-  // Capturar informações do dispositivo
-  captureDeviceInfo(): Record<string, any> {
-    return {
-      userAgent: navigator.userAgent,
-      platform: navigator.platform,
-      language: navigator.language,
-      screenWidth: window.screen.width,
-      screenHeight: window.screen.height,
-      timestamp: new Date().toISOString(),
-    };
-  },
-
-  // Capturar IP address (simulado - em produção usaria uma API real)
-  async captureIP(): Promise<string | null> {
-    try {
-      const response = await fetch('https://api.ipify.org?format=json');
-      const data = await response.json();
-      return data.ip;
-    } catch {
-      return null;
-    }
-  },
-};
-
 // Funções auxiliares para converter arquivos
 export const fileUtils = {
-  // Validar tamanho do arquivo (máximo 5MB)
+  // Evitar arquivos enormes em base64; uploads vão pelo REST e não pelo Storage.
   validateFileSize(file: File, maxSizeMB: number = 5): boolean {
     const maxSizeBytes = maxSizeMB * 1024 * 1024;
     return file.size <= maxSizeBytes;
+  },
+
+  validateFileType(file: File): boolean {
+    const allowedTypes = new Set([
+      'image/jpeg', 'image/png', 'image/webp', 'application/pdf', 'application/msword',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    ]);
+    const allowedExtensions = new Set(['jpg', 'jpeg', 'png', 'webp', 'pdf', 'doc', 'docx']);
+    const extension = file.name.split('.').pop()?.toLowerCase() ?? '';
+    return allowedExtensions.has(extension) && (!file.type || allowedTypes.has(file.type));
   },
 
   // Comprimir imagem antes de converter para base64
@@ -294,8 +171,11 @@ export const fileUtils = {
   // Converter arquivo para base64 (com compressão para imagens)
   async fileToBase64(file: File, compress: boolean = true): Promise<string> {
     // Validar tamanho
-    if (!this.validateFileSize(file, 10)) {
-      throw new Error('Arquivo muito grande. Máximo permitido: 10MB');
+    if (!this.validateFileSize(file, 5)) {
+      throw new Error('Arquivo muito grande. Máximo permitido: 5MB');
+    }
+    if (!this.validateFileType(file)) {
+      throw new Error('Tipo de arquivo não permitido. Envie imagens JPG, PNG ou WebP, PDF ou Word.');
     }
 
     // Se for imagem e compressão estiver habilitada, comprimir

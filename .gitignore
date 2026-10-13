@@ -20,4 +20,9 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
-.env
+.env*
+!.env.example
+
+# Private Firebase project configuration and service-account credentials
+**/google-services.json
+**/*service-account*.json

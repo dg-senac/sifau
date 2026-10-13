@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react';
+import { useCallback, useEffect, useState, useRef } from 'react';
 import {
   ShieldCheck,
   Users,
@@ -6,8 +6,6 @@ import {
   MessageSquare,
   Ban,
   Search,
-  Filter,
-  MoreVertical,
   CheckCircle,
   XCircle,
   Clock,
@@ -20,13 +18,13 @@ import {
   LogOut,
   RefreshCw,
   Download,
-  Trash2,
-  UserPlus,
   BarChart3,
+  UserCheck,
+  UserX,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
+import { signOut } from '@/lib/authActions';
 import { Fiscal } from '@/lib/types';
-import { ADMIN_CREDENTIALS } from '@/config/admin';
 
 type FiscalWithStatus = Fiscal & {
   is_online: boolean;
@@ -55,8 +53,39 @@ type AdminLog = {
   action: string;
   target_type: string;
   target_id: string | null;
-  details: any;
+  details: Record<string, unknown> | null;
   ip_address: string | null;
+  created_at: string;
+};
+
+type LocationRow = {
+  fiscal_id: string;
+  latitude: number;
+  longitude: number;
+  battery_level: number | null;
+  is_online: boolean;
+  last_seen: string;
+};
+
+type OccurrenceStatsRow = {
+  fiscal_registrou: string | null;
+  status: string;
+};
+
+type BanRow = {
+  id: string;
+  ban_type: 'temporary' | 'permanent';
+  expires_at: string | null;
+};
+
+type UnassignedOccurrence = {
+  id: string;
+  categoria: string;
+  descricao: string;
+  bairro: string;
+  endereco: string;
+  urgencia: string;
+  status: string;
   created_at: string;
 };
 
@@ -84,100 +113,121 @@ export function AdminScreen() {
     total_occurrences: 0,
     resolved_today: 0,
   });
+  const [unassignedOccurrences, setUnassignedOccurrences] = useState<UnassignedOccurrence[]>([]);
+  const [assignmentTargets, setAssignmentTargets] = useState<Record<string, string>>({});
+  const [assigningOccurrenceId, setAssigningOccurrenceId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [authorized, setAuthorized] = useState(false);
+  const [pageError, setPageError] = useState('');
+  const [actionMessage, setActionMessage] = useState('');
   const chatEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Carregar dados iniciais
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     setLoading(true);
+    setPageError('');
     try {
-      // Carregar fiscais com status
-      const { data: fiscaisData } = await supabase.from('fiscais').select('*');
-      
-      // Carregar localizações
-      const { data: locations } = await supabase
-        .from('fiscal_location')
-        .select('*')
-        .order('last_seen', { ascending: false });
+      const startOfDay = new Date();
+      startOfDay.setHours(0, 0, 0, 0);
+      const [fiscaisResult, locationsResult, bannedResult, occurrencesResult, resolvedResult, unassignedResult] = await Promise.all([
+        supabase.from('fiscais').select('*'),
+        supabase.from('fiscal_location').select('*').order('last_seen', { ascending: false }),
+        supabase.from('banned_users').select('id, ban_type, expires_at'),
+        supabase.from('ocorrencias').select('fiscal_registrou, status'),
+        supabase.from('auditoria').select('id', { count: 'exact', head: true })
+          .eq('status_novo', 'Resolvida').gte('created_at', startOfDay.toISOString()),
+        supabase.from('ocorrencias')
+          .select('id, categoria, descricao, bairro, endereco, urgencia, status, created_at')
+          .is('fiscal_designado', null)
+          .in('status', ['Aberta', 'Triada', 'Escalonada'])
+          .order('created_at', { ascending: true })
+          .limit(100),
+      ]);
 
-      // Carregar usuários banidos
-      const { data: banned } = await supabase.from('banned_users').select('id');
+      const failure = [fiscaisResult.error, locationsResult.error, bannedResult.error, occurrencesResult.error, resolvedResult.error, unassignedResult.error]
+        .find((error) => error !== null);
+      if (failure) throw failure;
 
-      // Carregar estatísticas de ocorrências
-      const { data: occurrences } = await supabase
-        .from('ocorrencias')
-        .select('fiscal_registrou, status');
+      const fiscaisData = fiscaisResult.data ?? [];
+      const locations = (locationsResult.data ?? []) as LocationRow[];
+      const banned = (bannedResult.data ?? []) as BanRow[];
+      const occurrences = (occurrencesResult.data ?? []) as OccurrenceStatsRow[];
+      setUnassignedOccurrences((unassignedResult.data ?? []) as UnassignedOccurrence[]);
+      const activeBanIds = new Set(banned
+        .filter((ban) => ban.ban_type === 'permanent' || Boolean(ban.expires_at && new Date(ban.expires_at).getTime() > Date.now()))
+        .map((ban) => ban.id));
 
-      // Processar dados
-      const fiscalMap = new Map(fiscaisData?.map(f => [f.id, f]) || []);
-      const locationMap = new Map();
-      const bannedSet = new Set(banned?.map(b => b.id) || []);
-      
-      // Agrupar localizações mais recentes por fiscal
-      locations?.forEach(loc => {
-        if (!locationMap.has(loc.fiscal_id) || new Date(loc.last_seen) > new Date(locationMap.get(loc.fiscal_id).last_seen)) {
-          locationMap.set(loc.fiscal_id, loc);
+      const locationMap = new Map<string, LocationRow>();
+      locations.forEach((location) => {
+        const previous = locationMap.get(location.fiscal_id);
+        if (!previous || new Date(location.last_seen) > new Date(previous.last_seen)) {
+          locationMap.set(location.fiscal_id, location);
         }
       });
 
-      // Contar ocorrências por fiscal
-      const occurrenceStats = new Map();
-      occurrences?.forEach(occ => {
-        if (occ.fiscal_registrou) {
-          const stats = occurrenceStats.get(occ.fiscal_registrou) || { total: 0, resolved: 0 };
-          stats.total++;
-          if (occ.status === 'Resolvida') stats.resolved++;
-          occurrenceStats.set(occ.fiscal_registrou, stats);
-        }
+      const occurrenceStats = new Map<string, { total: number; resolved: number }>();
+      occurrences.forEach((occurrence) => {
+        if (!occurrence.fiscal_registrou) return;
+        const current = occurrenceStats.get(occurrence.fiscal_registrou) ?? { total: 0, resolved: 0 };
+        current.total += 1;
+        if (occurrence.status === 'Resolvida') current.resolved += 1;
+        occurrenceStats.set(occurrence.fiscal_registrou, current);
       });
 
-      const processedFiscais: FiscalWithStatus[] = (fiscaisData || []).map(fiscal => {
+      const processedFiscais: FiscalWithStatus[] = fiscaisData.map((fiscal) => {
         const location = locationMap.get(fiscal.id);
-        const isOnline = location ? (new Date().getTime() - new Date(location.last_seen).getTime()) < 5 * 60 * 1000 : false;
-        const stats = occurrenceStats.get(fiscal.id) || { total: 0, resolved: 0 };
+        const lastSeen = location?.last_seen ?? fiscal.created_at ?? '';
+        const isOnline = Boolean(location?.is_online) && Date.now() - new Date(lastSeen).getTime() < 5 * 60 * 1000;
+        const fiscalStats = occurrenceStats.get(fiscal.id) ?? { total: 0, resolved: 0 };
+        const hasCoordinates = location && Number.isFinite(location.latitude) && Number.isFinite(location.longitude)
+          && (location.latitude !== 0 || location.longitude !== 0);
 
         return {
           ...fiscal,
           is_online: isOnline,
-          last_seen: location?.last_seen || fiscal.created_at,
-          current_location: location ? { lat: location.latitude, lng: location.longitude } : null,
-          battery_level: location?.battery_level || null,
-          occurrence_count: stats.total,
-          resolved_count: stats.resolved,
-          is_banned: bannedSet.has(fiscal.id),
+          last_seen: lastSeen,
+          current_location: hasCoordinates ? { lat: location.latitude, lng: location.longitude } : null,
+          battery_level: location?.battery_level ?? null,
+          occurrence_count: fiscalStats.total,
+          resolved_count: fiscalStats.resolved,
+          is_banned: activeBanIds.has(fiscal.id),
         };
       });
 
       setFiscais(processedFiscais);
-      setFilteredFiscais(processedFiscais);
-
-      // Calcular estatísticas
-      const today = new Date().toISOString().split('T')[0];
-      const resolvedToday = occurrences?.filter(o => 
-        o.status === 'Resolvida' && o.created_at.startsWith(today)
-      ).length || 0;
-
       setStats({
         total: processedFiscais.length,
-        online: processedFiscais.filter(f => f.is_online).length,
-        offline: processedFiscais.filter(f => !f.is_online).length,
-        banned: processedFiscais.filter(f => f.is_banned).length,
-        total_occurrences: occurrences?.length || 0,
-        resolved_today: resolvedToday,
+        online: processedFiscais.filter((fiscal) => fiscal.is_online).length,
+        offline: processedFiscais.filter((fiscal) => !fiscal.is_online).length,
+        banned: processedFiscais.filter((fiscal) => fiscal.is_banned).length,
+        total_occurrences: occurrences.length,
+        resolved_today: resolvedResult.count ?? 0,
       });
-
     } catch (error) {
-      console.error('Erro ao carregar dados:', error);
+      console.error('Erro ao carregar dados administrativos:', error);
+      setPageError('Não foi possível carregar os dados. Confira as migrations e políticas do Supabase.');
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
-    loadData();
-  }, []);
+    let active = true;
+    const verifyAdmin = async () => {
+      const { data: isAdmin, error } = await supabase.rpc('is_admin');
+      if (!active) return;
+      if (error || !isAdmin) {
+        setPageError(error ? 'Não foi possível verificar sua permissão administrativa.' : 'Acesso restrito a administradores do SIFAU.');
+        setLoading(false);
+        return;
+      }
+      setAuthorized(true);
+      await loadData();
+    };
+    void verifyAdmin();
+    return () => { active = false; };
+  }, [loadData]);
 
   // Filtrar fiscais
   useEffect(() => {
@@ -200,56 +250,101 @@ export function AdminScreen() {
     setFilteredFiscais(filtered);
   }, [searchTerm, statusFilter, fiscais]);
 
-  // Carregar mensagens quando selecionar fiscal
-  useEffect(() => {
-    if (selectedFiscal) {
-      loadMessages(selectedFiscal.id);
+  const loadMessages = useCallback(async (fiscalId: string) => {
+    const { data, error } = await supabase
+      .from('admin_messages')
+      .select('*')
+      .eq('fiscal_id', fiscalId)
+      .order('created_at', { ascending: true })
+      .limit(100);
+    if (error) {
+      setActionMessage('Não foi possível carregar a conversa.');
+      return;
     }
-  }, [selectedFiscal]);
 
-  // Auto-scroll no chat
+    const conversation = (data ?? []) as AdminMessage[];
+    const unreadIds = conversation
+      .filter((message) => message.sender_type === 'fiscal' && !message.read_at)
+      .map((message) => message.id);
+    if (unreadIds.length > 0) {
+      const readAt = new Date().toISOString();
+      const { error: readError } = await supabase
+        .from('admin_messages')
+        .update({ read_at: readAt })
+        .in('id', unreadIds);
+      if (!readError) {
+        conversation.forEach((message) => {
+          if (unreadIds.includes(message.id)) message.read_at = readAt;
+        });
+      }
+    }
+    setMessages(conversation);
+  }, []);
+
+  const selectedFiscalId = selectedFiscal?.id;
+  useEffect(() => {
+    if (!selectedFiscalId) {
+      setMessages([]);
+      return;
+    }
+
+    void loadMessages(selectedFiscalId);
+    const channel = supabase
+      .channel(`admin-messages-${selectedFiscalId}`)
+      .on('postgres_changes', {
+        event: '*', schema: 'public', table: 'admin_messages', filter: `fiscal_id=eq.${selectedFiscalId}`,
+      }, () => { void loadMessages(selectedFiscalId); })
+      .subscribe();
+    const refreshId = window.setInterval(() => { void loadMessages(selectedFiscalId); }, 30000);
+    return () => {
+      window.clearInterval(refreshId);
+      void supabase.removeChannel(channel);
+    };
+  }, [selectedFiscalId, loadMessages]);
+
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  const loadMessages = async (fiscalId: string) => {
-    const { data } = await supabase
-      .from('admin_messages')
-      .select('*')
-      .eq('fiscal_id', fiscalId)
-      .order('created_at', { ascending: true });
-    setMessages(data || []);
-  };
-
   const loadLogs = async () => {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('admin_logs')
       .select('*')
       .order('created_at', { ascending: false })
       .limit(50);
-    setLogs(data || []);
+    if (error) {
+      setActionMessage('Não foi possível carregar os logs administrativos.');
+      return;
+    }
+    setLogs((data ?? []) as AdminLog[]);
   };
 
   const sendMessage = async () => {
     if (!selectedFiscal || (!newMessage.trim() && attachments.length === 0)) return;
+    setActionMessage('');
 
-    const { data: adminData } = await supabase.auth.getUser();
-    const adminId = adminData.user?.id || 'local-admin';
+    const { data: adminData, error: authError } = await supabase.auth.getUser();
+    const adminId = adminData.user?.id;
+    if (authError || !adminId) {
+      setActionMessage('Sua sessão expirou. Entre novamente para enviar mensagens.');
+      return;
+    }
 
     const { error } = await supabase.from('admin_messages').insert({
       admin_id: adminId,
       fiscal_id: selectedFiscal.id,
       sender_type: 'admin',
       message: newMessage.trim(),
-      attachments: attachments,
+      attachments,
     });
 
     if (error) {
       console.error('Erro ao enviar mensagem:', error);
+      setActionMessage('Não foi possível enviar a mensagem. Tente novamente.');
     } else {
       setNewMessage('');
       setAttachments([]);
-      loadMessages(selectedFiscal.id);
+      await loadMessages(selectedFiscal.id);
     }
   };
 
@@ -257,7 +352,7 @@ export function AdminScreen() {
     const files = e.target.files;
     if (!files) return;
 
-    const readers = Array.from(files).map(file => 
+    const readers = Array.from(files).map((file) =>
       new Promise<string>((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = () => resolve(reader.result as string);
@@ -273,36 +368,38 @@ export function AdminScreen() {
 
   const banUser = async () => {
     if (!selectedFiscal) return;
+    if (banReason.trim().length < 5) {
+      setActionMessage('Informe um motivo com pelo menos cinco caracteres.');
+      return;
+    }
+    setActionMessage('');
 
-    const { data: adminData } = await supabase.auth.getUser();
-    const adminId = adminData.user?.id || 'local-admin';
+    const { data: adminData, error: authError } = await supabase.auth.getUser();
+    const adminId = adminData.user?.id;
+    if (authError || !adminId) {
+      setActionMessage('Sua sessão expirou. Entre novamente para continuar.');
+      return;
+    }
 
     const expiresAt = banType === 'temporary'
       ? new Date(Date.now() + banDuration * 24 * 60 * 60 * 1000).toISOString()
       : null;
-
-    // Inserir na tabela de banidos
-    const { error: banError } = await supabase.from('banned_users').insert({
+    const { error: banError } = await supabase.from('banned_users').upsert({
       id: selectedFiscal.id,
       fiscal_id: selectedFiscal.id,
       banned_by: adminId,
-      reason: banReason,
+      reason: banReason.trim(),
       ban_type: banType,
       expires_at: expiresAt,
-    });
+    }, { onConflict: 'id' });
 
     if (banError) {
       console.error('Erro ao banir usuário:', banError);
+      setActionMessage('Não foi possível registrar o banimento. Confira as políticas do Supabase.');
       return;
     }
 
-    // Fazer wipe dos dados se solicitado
-    if (confirm('Deseja apagar todos os dados deste fiscal? Esta ação é irreversível.')) {
-      await supabase.rpc('wipe_user_data', { user_id: selectedFiscal.id });
-    }
-
-    // Log da ação
-    await supabase.from('admin_logs').insert({
+    const { error: logError } = await supabase.from('admin_logs').insert({
       admin_id: adminId,
       action: 'BAN_USER',
       target_type: 'fiscal',
@@ -310,31 +407,76 @@ export function AdminScreen() {
       details: {
         fiscal_name: selectedFiscal.nome,
         ban_type: banType,
-        reason: banReason,
+        reason: banReason.trim(),
         expires_at: expiresAt,
       },
     });
 
     setShowBanModal(false);
     setBanReason('');
-    loadData();
+    if (logError) setActionMessage('Banimento registrado, mas não foi possível gravar o log administrativo.');
+    await loadData();
   };
 
   const unbanUser = async (fiscalId: string) => {
-    const { data: adminData } = await supabase.auth.getUser();
-    const adminId = adminData.user?.id || 'local-admin';
+    const { data: adminData, error: authError } = await supabase.auth.getUser();
+    const adminId = adminData.user?.id;
+    if (authError || !adminId) {
+      setActionMessage('Sua sessão expirou. Entre novamente para continuar.');
+      return;
+    }
 
-    await supabase.from('banned_users').delete().eq('id', fiscalId);
-
+    const { error } = await supabase.from('banned_users').delete().eq('id', fiscalId);
+    if (error) {
+      setActionMessage('Não foi possível remover o banimento.');
+      return;
+    }
     await supabase.from('admin_logs').insert({
       admin_id: adminId,
       action: 'UNBAN_USER',
       target_type: 'fiscal',
       target_id: fiscalId,
-      details: { reason: 'Admin manual unban' },
+      details: { reason: 'Remoção manual do banimento' },
     });
+    await loadData();
+  };
 
-    loadData();
+  const eligibleFiscals = fiscais.filter((fiscal) => fiscal.ativo && !fiscal.is_banned);
+
+  const setFiscalActive = async (fiscal: FiscalWithStatus, active: boolean) => {
+    setActionMessage('');
+    const { error } = await supabase.rpc('set_fiscal_active', {
+      p_fiscal_id: fiscal.id,
+      p_active: active,
+    });
+    if (error) {
+      console.error('Erro ao atualizar o acesso do fiscal:', error);
+      setActionMessage('Não foi possível atualizar o acesso deste fiscal.');
+      return;
+    }
+    await loadData();
+  };
+
+  const assignOccurrence = async (occurrenceId: string) => {
+    const targetId = assignmentTargets[occurrenceId] || eligibleFiscals[0]?.id;
+    if (!targetId) {
+      setActionMessage('Não há fiscais ativos e sem banimento para receber esta ocorrência.');
+      return;
+    }
+    setAssigningOccurrenceId(occurrenceId);
+    setActionMessage('');
+    const { error } = await supabase.rpc('assign_occurrence', {
+      p_occurrence_id: occurrenceId,
+      p_target_fiscal_id: targetId,
+    });
+    if (error) {
+      console.error('Erro ao distribuir ocorrência:', error);
+      setActionMessage('Não foi possível atribuir a ocorrência. Atualize a lista e tente novamente.');
+    } else {
+      setActionMessage('Ocorrência atribuída com sucesso.');
+      await loadData();
+    }
+    setAssigningOccurrenceId(null);
   };
 
   const handleRefresh = async () => {
@@ -344,32 +486,38 @@ export function AdminScreen() {
   };
 
   const handleLogout = async () => {
-    // Se for admin local, apenas recarrega a página
-    if (!supabase.auth.getSession()) {
-      window.location.reload();
-    } else {
-      await supabase.auth.signOut();
-      window.location.reload();
-    }
+    const { error } = await signOut();
+    if (error) setActionMessage('Não foi possível encerrar a sessão.');
   };
 
   const exportData = async () => {
-    const { data } = await supabase.from('fiscais').select('*');
-    if (!data) return;
+    const { data, error } = await supabase.from('fiscais').select('*');
+    if (error || !data) {
+      setActionMessage('Não foi possível exportar os fiscais.');
+      return;
+    }
 
-    const csv = [
-      'ID,Nome,Email,Telefone,Bairro,Especialidade,Ativo,Criado em',
-      ...data.map(f => 
-        `${f.id},"${f.nome}","${f.email}","${f.telefone}","${f.bairro}","${f.especialidade || ''}",${f.ativo},${f.created_at}`
-      )
-    ].join('\n');
-
-    const blob = new Blob([csv], { type: 'text/csv' });
+    const csvValue = (value: unknown) => {
+      const text = String(value ?? '');
+      const firstFormulaCharacter = text.trimStart()[0] ?? '';
+      const safeText = /^[=+\-@]/.test(firstFormulaCharacter) || /^[\t\r\n]/.test(text)
+        ? `'${text}`
+        : text;
+      return `"${safeText.replace(/"/g, '""')}"`;
+    };
+    const headers = ['ID', 'Nome', 'Email', 'Telefone', 'Bairro', 'Especialidade', 'Ativo', 'Criado em'];
+    const rows = data.map((fiscal) => [
+      fiscal.id, fiscal.nome, fiscal.email, fiscal.telefone, fiscal.bairro,
+      fiscal.especialidade, fiscal.ativo ? 'Sim' : 'Não', fiscal.created_at,
+    ].map(csvValue).join(','));
+    const csv = [headers.map(csvValue).join(','), ...rows].join('\r\n');
+    const blob = new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
     a.download = `fiscais_export_${new Date().toISOString().split('T')[0]}.csv`;
     a.click();
+    URL.revokeObjectURL(url);
   };
 
   if (loading) {
@@ -377,6 +525,18 @@ export function AdminScreen() {
       <div className="loading-screen">
         <RefreshCw className="spin" size={30} />
         <span>Carregando painel administrativo...</span>
+      </div>
+    );
+  }
+
+  if (!authorized) {
+    return (
+      <div className="auth-page">
+        <div className="auth-card">
+          <h2>Área restrita</h2>
+          <p className="muted">{pageError || 'Somente administradores podem acessar este painel.'}</p>
+          <button className="ghost-button full" onClick={handleLogout}>Encerrar sessão</button>
+        </div>
       </div>
     );
   }
@@ -406,6 +566,8 @@ export function AdminScreen() {
           </button>
         </div>
       </header>
+      {pageError && <div className="form-message" role="alert"><AlertTriangle size={16} />{pageError}</div>}
+      {actionMessage && <div className="form-message" role="status"><AlertTriangle size={16} />{actionMessage}</div>}
 
       {/* Stats Cards */}
       <div className="admin-stats">
@@ -452,6 +614,51 @@ export function AdminScreen() {
           </div>
         </div>
       </div>
+
+      <section className="admin-triage" aria-labelledby="admin-triage-heading">
+        <div className="admin-triage-heading">
+          <div>
+            <span className="eyebrow">Distribuição</span>
+            <h2 id="admin-triage-heading">Ocorrências sem fiscal designado</h2>
+          </div>
+          <span className="count-chip">{unassignedOccurrences.length} pendentes</span>
+        </div>
+        {unassignedOccurrences.length === 0 ? (
+          <p className="admin-triage-empty">Não há ocorrências aguardando distribuição.</p>
+        ) : eligibleFiscals.length === 0 ? (
+          <p className="admin-triage-empty">Ative pelo menos um fiscal não banido para distribuir os casos.</p>
+        ) : (
+          <div className="admin-triage-list">
+            {unassignedOccurrences.map((occurrence) => (
+              <article className="admin-triage-card" key={occurrence.id}>
+                <div className="admin-triage-details">
+                  <b>{occurrence.categoria} <span className="urgency">{occurrence.urgencia}</span></b>
+                  <span>{occurrence.endereco} · {occurrence.bairro} · {occurrence.status}</span>
+                  <p>{occurrence.descricao}</p>
+                </div>
+                <div className="admin-triage-actions">
+                  <select
+                    aria-label={`Fiscal para ${occurrence.categoria} em ${occurrence.bairro}`}
+                    value={assignmentTargets[occurrence.id] || eligibleFiscals[0]?.id || ''}
+                    onChange={(event) => setAssignmentTargets((current) => ({ ...current, [occurrence.id]: event.target.value }))}
+                  >
+                    {eligibleFiscals.map((fiscal) => (
+                      <option key={fiscal.id} value={fiscal.id}>{fiscal.nome} · {fiscal.bairro}</option>
+                    ))}
+                  </select>
+                  <button
+                    className="primary-button small"
+                    disabled={assigningOccurrenceId === occurrence.id}
+                    onClick={() => { void assignOccurrence(occurrence.id); }}
+                  >
+                    {assigningOccurrenceId === occurrence.id ? 'Atribuindo…' : 'Atribuir'}
+                  </button>
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
 
       {/* Filters */}
       <div className="admin-filters">
@@ -507,6 +714,9 @@ export function AdminScreen() {
               <div className="fiscal-info">
                 <div className="fiscal-header">
                   <h3>{fiscal.nome}</h3>
+                  <span className={`status-badge ${fiscal.ativo ? 'online' : 'offline'}`}>
+                    {fiscal.ativo ? 'Ativo' : 'Aguardando aprovação'}
+                  </span>
                   {fiscal.is_banned && <Ban size={16} className="ban-icon" />}
                 </div>
                 <p className="fiscal-email">{fiscal.email}</p>
@@ -541,6 +751,17 @@ export function AdminScreen() {
                 </div>
               </div>
               <div className="fiscal-actions">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void setFiscalActive(fiscal, !fiscal.ativo);
+                  }}
+                  className={`action-button ${fiscal.ativo ? 'ban' : 'unban'}`}
+                  title={fiscal.ativo ? 'Desativar acesso' : 'Aprovar e ativar fiscal'}
+                  aria-label={fiscal.ativo ? 'Desativar acesso' : 'Aprovar e ativar fiscal'}
+                >
+                  {fiscal.ativo ? <UserX size={18} /> : <UserCheck size={18} />}
+                </button>
                 <button
                   onClick={(e) => {
                     e.stopPropagation();

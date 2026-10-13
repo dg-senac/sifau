@@ -1,13 +1,13 @@
 import { FormEvent, useEffect, useState } from 'react';
 import {
-  AlertTriangle, Camera, CheckCircle2, Loader2, Navigation, RefreshCw, WifiOff,
+  AlertTriangle, CheckCircle2, Loader2, Navigation, RefreshCw, WifiOff,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { CATEGORIES, Fiscal, SUBCATEGORIES, URGENCY_LEVELS } from '@/lib/types';
 import { classifyByText } from '@/lib/classify';
 import { PageTitle } from '@/components/ui';
 import { PhotoUpload } from '@/components/PhotoUpload';
-import { enqueue } from '@/lib/offlineQueue';
+import { createQueueId, enqueue, isRecoverableSyncError } from '@/lib/offlineQueue';
 
 export function NewOccurrence({
   fiscal,
@@ -110,6 +110,7 @@ export function NewOccurrence({
     setMessage('');
 
     const basePayload = {
+      id: createQueueId(),
       fiscal_registrou: fiscal.id,
       categoria: form.categoria,
       subcategoria: form.subcategoria,
@@ -124,7 +125,14 @@ export function NewOccurrence({
 
     if (offline || !navigator.onLine) {
       const deadline = new Date(Date.now() + 72 * 3600000).toISOString();
-      enqueue('ocorrencias', { ...basePayload, sla_deadline: deadline }, `Ocorrência: ${form.categoria}`);
+      try {
+        enqueue('ocorrencias', { ...basePayload, sla_deadline: deadline }, `Ocorrência: ${form.categoria}`);
+      } catch (error) {
+        console.error('Não foi possível guardar a ocorrência neste aparelho:', error);
+        setMessage('Não foi possível salvar offline. Libere espaço no aparelho e tente novamente.');
+        setSaving(false);
+        return;
+      }
       setSaving(false);
       onDone();
       return;
@@ -136,8 +144,22 @@ export function NewOccurrence({
     const { error } = await supabase.from('ocorrencias').insert({ ...basePayload, sla_deadline: deadline });
 
     if (error) {
-      // Falha de rede mesmo com navigator.onLine=true: garante que o registro não se perca.
-      enqueue('ocorrencias', { ...basePayload, sla_deadline: deadline }, `Ocorrência: ${form.categoria}`);
+      console.error('Erro ao registrar ocorrência:', error);
+      if (!isRecoverableSyncError(error)) {
+        setMessage('Não foi possível salvar. Confira os campos e suas permissões e tente novamente.');
+        setSaving(false);
+        return;
+      }
+      // O mesmo ID torna seguro repetir um insert que possa ter sido confirmado
+      // pelo servidor, mas cuja resposta tenha se perdido na rede.
+      try {
+        enqueue('ocorrencias', { ...basePayload, sla_deadline: deadline }, `Ocorrência: ${form.categoria}`);
+      } catch (queueError) {
+        console.error('Não foi possível guardar a ocorrência neste aparelho:', queueError);
+        setMessage('Não foi possível salvar offline. Libere espaço no aparelho e tente novamente.');
+        setSaving(false);
+        return;
+      }
       setMessage('Sem conexão estável: a ocorrência foi salva na fila e será enviada automaticamente.');
       setSaving(false);
       setTimeout(onDone, 1400);

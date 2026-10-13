@@ -1,15 +1,13 @@
 import { FormEvent, useEffect, useState } from 'react';
 import {
-  AlertTriangle, Camera, CheckCircle2, Loader2, Navigation, RefreshCw, WifiOff,
+  AlertTriangle, CheckCircle2, Loader2, Navigation, RefreshCw, WifiOff,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { CATEGORIES, Fiscal, SUBCATEGORIES, URGENCY_LEVELS } from '@/lib/types';
 import { classifyByText } from '@/lib/classify';
 import { PageTitle } from '@/components/ui';
 import { PhotoUpload } from '@/components/PhotoUpload';
-import { DocumentGallery } from '@/components/DocumentGallery';
-import { enqueue } from '@/lib/offlineQueue';
-import { documentsApi, fileUtils } from '@/lib/documents';
+import { createQueueId, enqueue, isRecoverableSyncError } from '@/lib/offlineQueue';
 
 export function NewOccurrence({
   fiscal,
@@ -32,7 +30,6 @@ export function NewOccurrence({
   const [message, setMessage] = useState('');
   const [offline, setOffline] = useState(!navigator.onLine);
   const [photos, setPhotos] = useState<string[]>([]);
-  const [documents, setDocuments] = useState<any[]>([]);
   const [duplicateWarn, setDuplicateWarn] = useState('');
 
   useEffect(() => {
@@ -103,53 +100,6 @@ export function NewOccurrence({
     }
   };
 
-  const handleDocumentUpload = async (files: File[]) => {
-    if (!fiscal) return;
-    try {
-      for (const file of files) {
-        // Validar tamanho antes de processar
-        if (!fileUtils.validateFileSize(file, 10)) {
-          throw new Error(`Arquivo "${file.name}" excede o limite de 10MB`);
-        }
-
-        const base64 = await fileUtils.fileToBase64(file, true);
-        
-        const documento = {
-          fiscal_id: fiscal.id,
-          ocorrencia_id: null,
-          vistoria_id: null,
-          ordem_servico_id: null,
-          tipo_documento: file.type.startsWith('image/') ? 'foto' : 'documento',
-          titulo: file.name,
-          descricao: 'Documento da nova ocorrência',
-          arquivo_data: base64,
-          arquivo_nome: file.name,
-          arquivo_tipo: file.type,
-          arquivo_tamanho: file.size,
-          ordem: documents.length,
-          metadados: {
-            uploadDate: new Date().toISOString(),
-          },
-        };
-
-        const createdDoc = await documentsApi.create(documento);
-        setDocuments(prev => [...prev, createdDoc]);
-      }
-    } catch (error) {
-      console.error('Erro ao fazer upload de documento:', error);
-      throw error; // Re-throw para que o DocumentGallery possa mostrar o erro
-    }
-  };
-
-  const handleDocumentDelete = async (id: string) => {
-    try {
-      await documentsApi.delete(id);
-      setDocuments(prev => prev.filter(d => d.id !== id));
-    } catch (error) {
-      console.error('Erro ao deletar documento:', error);
-    }
-  };
-
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (form.descricao.trim().length < 20) { setMessage('Descreva a ocorrência com pelo menos 20 caracteres.'); return; }
@@ -160,6 +110,7 @@ export function NewOccurrence({
     setMessage('');
 
     const basePayload = {
+      id: createQueueId(),
       fiscal_registrou: fiscal.id,
       categoria: form.categoria,
       subcategoria: form.subcategoria,
@@ -174,7 +125,14 @@ export function NewOccurrence({
 
     if (offline || !navigator.onLine) {
       const deadline = new Date(Date.now() + 72 * 3600000).toISOString();
-      enqueue('ocorrencias', { ...basePayload, sla_deadline: deadline }, `Ocorrência: ${form.categoria}`);
+      try {
+        enqueue('ocorrencias', { ...basePayload, sla_deadline: deadline }, `Ocorrência: ${form.categoria}`);
+      } catch (error) {
+        console.error('Não foi possível guardar a ocorrência neste aparelho:', error);
+        setMessage('Não foi possível salvar offline. Libere espaço no aparelho e tente novamente.');
+        setSaving(false);
+        return;
+      }
       setSaving(false);
       onDone();
       return;
@@ -186,8 +144,22 @@ export function NewOccurrence({
     const { error } = await supabase.from('ocorrencias').insert({ ...basePayload, sla_deadline: deadline });
 
     if (error) {
-      // Falha de rede mesmo com navigator.onLine=true: garante que o registro não se perca.
-      enqueue('ocorrencias', { ...basePayload, sla_deadline: deadline }, `Ocorrência: ${form.categoria}`);
+      console.error('Erro ao registrar ocorrência:', error);
+      if (!isRecoverableSyncError(error)) {
+        setMessage('Não foi possível salvar. Confira os campos e suas permissões e tente novamente.');
+        setSaving(false);
+        return;
+      }
+      // O mesmo ID torna seguro repetir um insert que possa ter sido confirmado
+      // pelo servidor, mas cuja resposta tenha se perdido na rede.
+      try {
+        enqueue('ocorrencias', { ...basePayload, sla_deadline: deadline }, `Ocorrência: ${form.categoria}`);
+      } catch (queueError) {
+        console.error('Não foi possível guardar a ocorrência neste aparelho:', queueError);
+        setMessage('Não foi possível salvar offline. Libere espaço no aparelho e tente novamente.');
+        setSaving(false);
+        return;
+      }
       setMessage('Sem conexão estável: a ocorrência foi salva na fila e será enviada automaticamente.');
       setSaving(false);
       setTimeout(onDone, 1400);
@@ -274,17 +246,6 @@ export function NewOccurrence({
         <div className="form-section">
           <h2>Fotos</h2>
           <PhotoUpload photos={photos} onChange={setPhotos} max={5} label="Anexar fotos" hint="Até 5 imagens da ocorrência" />
-        </div>
-
-        <div className="form-section">
-          <h2>Documentos adicionais</h2>
-          <DocumentGallery
-            documentos={documents}
-            onUpload={handleDocumentUpload}
-            onDelete={handleDocumentDelete}
-            editable={true}
-            showMetadata={true}
-          />
         </div>
 
         {message && (

@@ -6,6 +6,9 @@ export type Fiscal = {
   bairro: string;
   especialidade?: string | null;
   ativo: boolean;
+  created_at?: string;
+  notif_atribuicao?: boolean;
+  notif_sla?: boolean;
 };
 
 export type Occurrence = {
@@ -73,6 +76,25 @@ export type Auditoria = {
   observacao: string | null;
 };
 
+export type AutoInfracao = {
+  id: string;
+  os_id: string | null;
+  ocorrencia_id: string | null;
+  tipo_infracao: string;
+  artigo_legal: string;
+  valor_base: number;
+  valor_multa: number;
+  motivo: string;
+  autuado_nome: string;
+  autuado_documento: string;
+  assinatura_autuado: string | null;
+  ciencia: (typeof SCIENCE_TYPES)[number];
+  testemunha_nome: string | null;
+  pagamento: (typeof PAYMENT_STATUSES)[number];
+  vencimento: string;
+  created_at: string;
+};
+
 export type Exportacao = {
   id: string;
   fiscal_id: string;
@@ -107,7 +129,7 @@ export type Documento = {
   arquivo_tipo: string | null;
   arquivo_tamanho: number | null;
   ordem: number;
-  metadados: Record<string, any>;
+  metadados: Record<string, unknown>;
   criado_em: string;
   atualizado_em: string;
 };
@@ -124,9 +146,11 @@ export type AssinaturaDigital = {
   certificado_validade_fim: string | null;
   hash_documento: string | null;
   ip_address: string | null;
-  dispositivo_info: Record<string, any>;
+  dispositivo_info: Record<string, unknown>;
   criado_em: string;
 };
+
+export const DOCUMENT_TYPES = ['foto', 'assinatura', 'documento', 'relatorio', 'auto_infracao'] as const;
 
 export const CATEGORIES = [
   'Buraco na via',
@@ -172,8 +196,6 @@ export const OS_ORIGINS = ['Preventiva', 'Denúncia', 'Ofício', 'Comunicação 
 export const SCIENCE_TYPES = ['Assinou', 'Recusou', 'Ausente'] as const;
 export const PAYMENT_STATUSES = ['Pendente', 'Pago', 'Cancelado'] as const;
 
-export const DOCUMENT_TYPES = ['foto', 'assinatura', 'documento', 'relatorio', 'auto_infracao'] as const;
-
 export type Screen =
   | 'home'
   | 'new'
@@ -185,6 +207,7 @@ export type Screen =
   | 'more'
   | 'profile'
   | 'notifications'
+  | 'messages'
   | 'map'
   | 'admin'
   | 'documents';

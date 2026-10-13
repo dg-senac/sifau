@@ -4,7 +4,6 @@ import {
   FileText, 
   Download, 
   Trash2, 
-  ZoomIn, 
   X,
   Plus,
   ChevronLeft,
@@ -38,7 +37,7 @@ export function DocumentGallery({
   const [uploadError, setUploadError] = useState<string>('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const filteredDocs = documentos.sort((a, b) => a.ordem - b.ordem);
+  const filteredDocs = [...documentos].sort((a, b) => a.ordem - b.ordem);
   const imageDocs = filteredDocs.filter(d => d.tipo_documento === 'foto');
   const otherDocs = filteredDocs.filter(d => d.tipo_documento !== 'foto');
 
@@ -50,8 +49,11 @@ export function DocumentGallery({
       try {
         // Validar tamanho dos arquivos antes de fazer upload
         for (const file of files) {
-          if (!fileUtils.validateFileSize(file, 10)) {
-            throw new Error(`Arquivo "${file.name}" excede o limite de 10MB`);
+          if (!fileUtils.validateFileSize(file, 5)) {
+            throw new Error(`Arquivo "${file.name}" excede o limite de 5MB`);
+          }
+          if (!fileUtils.validateFileType(file)) {
+            throw new Error(`Tipo de arquivo não permitido: ${file.name}`);
           }
         }
         await onUpload(files);

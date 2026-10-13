@@ -1,7 +1,7 @@
 -- ============================================================================
 -- SIFAU — Sistema de Documentos
--- Adiciona suporte para galeria de fotos, histórico de documentos e 
--- assinaturas digitais avançadas com certificado
+-- Adiciona suporte para galeria de fotos, histórico de documentos e
+-- registros de assinatura manuscrita (sem validação de certificado digital)
 -- ============================================================================
 
 -- Tabela de documentos e fotos
@@ -108,50 +108,12 @@ CREATE POLICY "assinaturas_insert_own"
   TO authenticated
   WITH CHECK (fiscal_id = auth.uid());
 
--- Função para validar certificado digital (simulada)
-CREATE OR REPLACE FUNCTION public.validar_certificado_digital(
-  p_certificado text,
-  p_emissor text,
-  p_validade_inicio timestamptz,
-  p_validade_fim timestamptz
-)
-RETURNS boolean AS $$
-BEGIN
-  -- Validações básicas
-  IF p_certificado IS NULL OR length(p_certificado) < 100 THEN
-    RETURN false;
-  END IF;
-  
-  IF p_emissor IS NULL OR length(p_emissor) < 3 THEN
-    RETURN false;
-  END IF;
-  
-  IF p_validade_inicio IS NULL OR p_valididade_fim IS NULL THEN
-    RETURN false;
-  END IF;
-  
-  -- Verificar se o certificado está válido no momento atual
-  IF now() < p_valididade_inicio OR now() > p_valididade_fim THEN
-    RETURN false;
-  END IF;
-  
-  -- Em produção, aqui seria feita a validação real do certificado
-  -- usando uma autoridade certificadora
-  RETURN true;
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
-
--- Função para gerar hash do documento
-CREATE OR REPLACE FUNCTION public.gerar_hash_documento(p_data text)
-RETURNS text AS $$
-BEGIN
-  RETURN encode(digest(p_data, 'sha256'), 'hex');
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+-- Certificate validation is intentionally not implemented in the browser app.
+-- Keep no RPC that could falsely mark user-provided certificate data as valid.
 
 -- Comentários
 COMMENT ON TABLE public.documentos IS 'Sistema de documentos do SIFAU - fotos, assinaturas, relatórios';
-COMMENT ON TABLE public.assinaturas_digitais IS 'Assinaturas digitais avançadas com certificado';
+COMMENT ON TABLE public.assinaturas_digitais IS 'Registros de assinatura manuscrita; não representam certificado ou assinatura digital validada';
 COMMENT ON COLUMN public.documentos.arquivo_data IS 'Dados do arquivo em base64';
 COMMENT ON COLUMN public.documentos.metadados IS 'Metadados adicionais em JSON (ex: GPS, timestamp da foto, etc)';
-COMMENT ON COLUMN public.assinaturas_digitais.certificado_digital IS 'Certificado digital em base64 para validação';
+COMMENT ON COLUMN public.assinaturas_digitais.certificado_digital IS 'Campo legado; não é validado pelo sistema';

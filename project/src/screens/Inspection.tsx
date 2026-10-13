@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from 'react';
+import { FormEvent, lazy, useCallback, useEffect, useState } from 'react';
 import {
   AlertTriangle, CheckCircle2, ChevronRight, ClipboardList, Clock3,
   Loader2, MapPin, Navigation, X,
@@ -7,10 +7,8 @@ import { supabase } from '@/lib/supabase';
 import { ACTIONS, Fiscal, Occurrence } from '@/lib/types';
 import { PageTitle, EmptyState, Badge } from '@/components/ui';
 import { PhotoUpload } from '@/components/PhotoUpload';
-import { DocumentGallery } from '@/components/DocumentGallery';
-import { enqueue, enqueueUpdate } from '@/lib/offlineQueue';
-import { documentsApi, fileUtils } from '@/lib/documents';
-import { AutoInfracaoForm } from '@/screens/AutoInfracao';
+import { createQueueId, enqueueBatch, isRecoverableSyncError } from '@/lib/offlineQueue';
+const AutoInfracaoForm = lazy(() => import('@/screens/AutoInfracao').then((module) => ({ default: module.AutoInfracaoForm })));
 
 export function Inspection({ fiscal }: { fiscal: Fiscal | null }) {
   const [items, setItems] = useState<Occurrence[]>([]);
@@ -20,23 +18,34 @@ export function Inspection({ fiscal }: { fiscal: Fiscal | null }) {
   const [showRedistribute, setShowRedistribute] = useState<Occurrence | null>(null);
   const [autoFor, setAutoFor] = useState<{ item: Occurrence; valorMulta: number; numeroProcesso: string } | null>(null);
 
-  const load = async () => {
+  const fiscalId = fiscal?.id;
+  const load = useCallback(async () => {
+    if (!fiscalId) {
+      setItems([]);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
-    if (!fiscal) return;
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('ocorrencias').select('*')
-      .eq('fiscal_designado', fiscal.id)
+      .eq('fiscal_designado', fiscalId)
       .in('status', ['Atribuída', 'Em vistoria'])
       .order('sla_deadline');
+    if (error) console.error('Erro ao carregar a fila de vistorias:', error.message);
     setItems(data ?? []);
     setLoading(false);
-  };
+  }, [fiscalId]);
 
-  useEffect(() => { load(); }, [fiscal?.id]);
+  useEffect(() => { void load(); }, [load]);
 
   const loadFiscais = async () => {
-    const { data } = await supabase.from('fiscais').select('*').eq('ativo', true).neq('id', fiscal?.id ?? '');
-    setFiscais(data ?? []);
+    const { data, error } = await supabase.rpc('get_fiscal_directory');
+    if (error) {
+      console.error('Erro ao carregar a equipe:', error.message);
+      setFiscais([]);
+      return;
+    }
+    setFiscais(((data ?? []) as Fiscal[]).filter((member) => member.ativo && member.id !== fiscal?.id));
   };
 
   if (autoFor) {
@@ -70,7 +79,6 @@ export function Inspection({ fiscal }: { fiscal: Fiscal | null }) {
       <RedistributeScreen
         item={showRedistribute}
         fiscais={fiscais}
-        fiscal={fiscal}
         onClose={() => setShowRedistribute(null)}
         onRedistributed={() => { setShowRedistribute(null); load(); }}
       />
@@ -84,8 +92,8 @@ export function Inspection({ fiscal }: { fiscal: Fiscal | null }) {
       <div className="notice-card">
         <div className="notice-icon"><Navigation size={19} /></div>
         <div>
-          <b>Distribuição equilibrada</b>
-          <span>Os casos são atribuídos automaticamente por região e disponibilidade.</span>
+          <b>Casos atribuídos pela coordenação</b>
+          <span>As ocorrências designadas a você aparecem nesta fila; a administração faz a triagem e distribuição.</span>
         </div>
       </div>
       {loading ? (
@@ -122,9 +130,9 @@ export function Inspection({ fiscal }: { fiscal: Fiscal | null }) {
 }
 
 function RedistributeScreen({
-  item, fiscais, fiscal, onClose, onRedistributed,
+  item, fiscais, onClose, onRedistributed,
 }: {
-  item: Occurrence; fiscais: Fiscal[]; fiscal: Fiscal | null;
+  item: Occurrence; fiscais: Fiscal[];
   onClose: () => void; onRedistributed: () => void;
 }) {
   const [busy, setBusy] = useState(false);
@@ -132,15 +140,11 @@ function RedistributeScreen({
 
   const redistribute = async (targetId: string) => {
     setBusy(true);
-    const { error } = await supabase.from('ocorrencias').update({ fiscal_designado: targetId }).eq('id', item.id);
-    if (error) { setMessage('Não foi possível redistribuir.'); setBusy(false); return; }
-    await supabase.from('auditoria').insert({
-      ocorrencia_id: item.id,
-      status_anterior: item.status,
-      status_novo: 'Atribuída',
-      fiscal_id: fiscal?.id ?? '',
-      observacao: 'Ocorrência redistribuída para outro fiscal',
+    const { error } = await supabase.rpc('redistribute_occurrence', {
+      p_occurrence_id: item.id,
+      p_target_fiscal_id: targetId,
     });
+    if (error) { setMessage('Não foi possível redistribuir.'); setBusy(false); return; }
     onRedistributed();
   };
 
@@ -187,8 +191,6 @@ function InspectionForm({
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
   const [photos, setPhotos] = useState<string[]>([]);
-  const [documents, setDocuments] = useState<any[]>([]);
-  const [loadingDocs, setLoadingDocs] = useState(false);
 
   const registerArrival = () => {
     if (!navigator.geolocation) { setMessage('Seu aparelho não disponibilizou a localização.'); return; }
@@ -217,72 +219,6 @@ function InspectionForm({
     );
   };
 
-  const loadDocuments = async () => {
-    if (!fiscal) return;
-    setLoadingDocs(true);
-    try {
-      const docs = await documentsApi.getByOccurrence(item.id);
-      setDocuments(docs);
-    } catch (error) {
-      console.error('Erro ao carregar documentos:', error);
-    } finally {
-      setLoadingDocs(false);
-    }
-  };
-
-  useEffect(() => {
-    loadDocuments();
-  }, [item.id, fiscal?.id]);
-
-  const handleDocumentUpload = async (files: File[]) => {
-    if (!fiscal) return;
-    try {
-      for (const file of files) {
-        // Validar tamanho antes de processar
-        if (!fileUtils.validateFileSize(file, 10)) {
-          throw new Error(`Arquivo "${file.name}" excede o limite de 10MB`);
-        }
-
-        const base64 = await fileUtils.fileToBase64(file, true);
-        
-        const documento = {
-          fiscal_id: fiscal.id,
-          ocorrencia_id: item.id,
-          vistoria_id: null,
-          ordem_servico_id: null,
-          tipo_documento: file.type.startsWith('image/') ? 'foto' : 'documento',
-          titulo: file.name,
-          descricao: `Documento da ocorrência ${item.id}`,
-          arquivo_data: base64,
-          arquivo_nome: file.name,
-          arquivo_tipo: file.type,
-          arquivo_tamanho: file.size,
-          ordem: documents.length,
-          metadados: {
-            uploadDate: new Date().toISOString(),
-            occurrenceId: item.id,
-          },
-        };
-
-        await documentsApi.create(documento);
-      }
-
-      await loadDocuments();
-    } catch (error) {
-      console.error('Erro ao fazer upload de documento:', error);
-      alert(error instanceof Error ? error.message : 'Erro ao fazer upload');
-    }
-  };
-
-  const handleDocumentDelete = async (id: string) => {
-    try {
-      await documentsApi.delete(id);
-      await loadDocuments();
-    } catch (error) {
-      console.error('Erro ao deletar documento:', error);
-    }
-  };
-
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (!arrival) { setMessage('Registre a chegada antes de finalizar a vistoria.'); return; }
@@ -293,6 +229,7 @@ function InspectionForm({
     setMessage('');
 
     const vistoriaPayload = {
+      id: createQueueId(),
       ocorrencia_id: item.id,
       fiscal_id: fiscal.id,
       chegada_at: arrival.time.toISOString(),
@@ -305,52 +242,69 @@ function InspectionForm({
       fotos_depois: photos,
     };
     const newStatus = acao === 'Sem ação' || acao === 'Orientação' ? 'Resolvida' : acao === 'Encaminhamento' ? 'Escalonada' : 'Resolvida';
+    const queueInspection = () => enqueueBatch([
+      { table: 'vistorias', op: 'insert', payload: vistoriaPayload, label: `Vistoria: ${item.categoria}` },
+      { table: 'ocorrencias', op: 'update', match: { id: item.id }, payload: { status: newStatus }, label: 'Atualização de status' },
+    ]);
 
     if (!navigator.onLine) {
-      enqueue('vistorias', vistoriaPayload, `Vistoria: ${item.categoria}`);
-      enqueueUpdate('ocorrencias', { id: item.id }, { status: newStatus }, 'Atualização de status');
-      enqueue('auditoria', {
-        ocorrencia_id: item.id,
-        status_anterior: item.status,
-        status_novo: newStatus,
-        fiscal_id: fiscal.id,
-        latitude: arrival.lat,
-        longitude: arrival.lng,
-        observacao: `Vistoria realizada (offline). Ação: ${acao}.`,
-      }, 'Auditoria');
+      try {
+        queueInspection();
+      } catch (error) {
+        console.error('Não foi possível guardar a vistoria neste aparelho:', error);
+        setMessage('Não foi possível salvar a vistoria offline. Libere espaço no aparelho e tente novamente.');
+        setSaving(false);
+        return;
+      }
       setSaving(false);
       onClose(acao === 'Multa' ? { valorMulta: parseFloat(valorMulta) || 0, numeroProcesso } : undefined);
       return;
     }
 
-    const { error: vistoriaError } = await supabase.from('vistorias').insert(vistoriaPayload);
+    const { error: completionError } = await supabase.rpc('complete_inspection', {
+      p_vistoria_id: vistoriaPayload.id,
+      p_occurrence_id: item.id,
+      p_fiscal_id: fiscal.id,
+      p_arrival_at: arrival.time.toISOString(),
+      p_arrival_latitude: arrival.lat,
+      p_arrival_longitude: arrival.lng,
+      p_laudo: laudo.trim(),
+      p_acao_tomada: acao,
+      p_valor_multa: acao === 'Multa' ? parseFloat(valorMulta) || 0 : null,
+      p_numero_processo: acao === 'Multa' ? numeroProcesso : null,
+      p_fotos_depois: photos,
+      p_status: newStatus,
+      p_note: `Vistoria realizada. Ação: ${acao}.`,
+    });
 
-    if (vistoriaError) {
-      enqueue('vistorias', vistoriaPayload, `Vistoria: ${item.categoria}`);
-      setMessage('Sem conexão estável: a vistoria foi salva na fila e será enviada automaticamente.');
-      setSaving(false);
-      setTimeout(() => onClose(acao === 'Multa' ? { valorMulta: parseFloat(valorMulta) || 0, numeroProcesso } : undefined), 1400);
+    if (completionError) {
+      console.error('Erro ao concluir vistoria:', completionError);
+      if (isRecoverableSyncError(completionError)) {
+        try {
+          queueInspection();
+          setMessage('Sem conexão estável: vistoria e atualização foram salvas na fila para sincronização.');
+          setSaving(false);
+          setTimeout(() => onClose(acao === 'Multa' ? { valorMulta: parseFloat(valorMulta) || 0, numeroProcesso } : undefined), 1400);
+        } catch (queueError) {
+          console.error('Não foi possível guardar a vistoria neste aparelho:', queueError);
+          setMessage('Não foi possível salvar a vistoria offline. Libere espaço no aparelho e tente novamente.');
+          setSaving(false);
+        }
+      } else {
+        setMessage('Não foi possível concluir a vistoria. Verifique seus dados e permissões.');
+        setSaving(false);
+      }
       return;
     }
 
-    await supabase.from('ocorrencias').update({ status: newStatus }).eq('id', item.id);
-    await supabase.from('auditoria').insert({
-      ocorrencia_id: item.id,
-      status_anterior: item.status,
-      status_novo: newStatus,
-      fiscal_id: fiscal.id,
-      latitude: arrival.lat,
-      longitude: arrival.lng,
-      observacao: `Vistoria realizada. Ação: ${acao}.`,
-    });
-
+    setSaving(false);
     onClose(acao === 'Multa' ? { valorMulta: parseFloat(valorMulta) || 0, numeroProcesso } : undefined);
   };
 
   return (
     <>
       <PageTitle eyebrow="Vistoria em andamento" title={item.categoria}
-        action={<button className="icon-button light" onClick={onClose}><X size={20} /></button>} />
+        action={<button className="icon-button light" onClick={() => onClose()}><X size={20} /></button>} />
       <div className="occurrence-detail">
         <p>{item.descricao}</p>
         <div className="card-meta">
@@ -398,17 +352,6 @@ function InspectionForm({
         <div className="form-section">
           <h2>Fotos "depois"</h2>
           <PhotoUpload photos={photos} onChange={setPhotos} max={5} minRequired={1} label="Anexar foto" hint="Mínimo 1 foto obrigatória" />
-        </div>
-
-        <div className="form-section">
-          <h2>Documentos adicionais</h2>
-          <DocumentGallery
-            documentos={documents}
-            onUpload={handleDocumentUpload}
-            onDelete={handleDocumentDelete}
-            editable={true}
-            showMetadata={true}
-          />
         </div>
 
         {message && <div className="form-message"><AlertTriangle size={16} />{message}</div>}
