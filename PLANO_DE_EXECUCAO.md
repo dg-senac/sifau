@@ -148,14 +148,18 @@ Aqui é onde os dois bugs de SQL morrem **por construção**, em vez de remendo.
 
 **✅ Fim da Fase E:** produto sem lacuna bloqueante, com rede de proteção automatizada.
 
+**Pendência desta fase, com decisão já tomada e execução não feita:** o **anexo da conversa** que o administrador envia. Você decidiu liberar para o destinatário ("Sim, liberar para o destinatário"), e isso ainda não foi implementado — hoje a tela do fiscal diz "Anexos disponíveis somente no painel administrativo" (`MessagesScreen.tsx`), porque a política do Storage exige que a pasta seja do próprio usuário. Falta: a política que permite ao fiscal ler o arquivo preso a uma mensagem endereçada a ele, a tela mostrando o anexo, e o teste provando que ele **não** alcança anexo de conversa alheia.
+
 ---
 
 ## FASE F — Identidade visual e distribuição
 
-### ⏸️ Passo 13 — Logo
-- **Decisão sua:** quer que eu **gere as imagens** a partir dos prompts de `PROMPTS_LOGO.md`, ou você leva os prompts para a sua ferramenta?
-- **O que muda:** logo horizontal (login), vertical (splash), ícone do app, monocromática (PDF), favicon.
-- **Verificação:** preview local com a logo real na tela de login.
+### ✅ Passo 13 — Logo
+- **O que mudou em relação ao combinado:** você autorizou gerar as imagens aqui e, ao ver as duas primeiras propostas, recusou — **e recusou com razão**: gerador de imagem erra letra e desalinha o conjunto. Fiz o ajuste que o próprio `PROMPTS_LOGO.md` já recomendava: a marca passou a ser **composta em código**, com a tipografia real do aplicativo (Space Grotesk e DM Sans, que agora viajam dentro do pacote). Saiu melhor do que a proposta original em três pontos: é determinística, é editável e não tem arquivo binário para ninguém manter.
+- **O que existe:** marca horizontal, vertical, símbolo, versão de uma cor, ícone do aplicativo (quadrado, redondo e adaptativo) e abertura do Android. Uma fonte só (`src/lib/marca.ts`): o desenho que aparece na tela, o que sai em arquivo e o que vai para dentro do APK saem do mesmo lugar — e `npm run test:marca` reprova se divergirem.
+- **A decisão de desenho que importa:** o símbolo mantém o escudo com confirmação que já estava no aplicativo (quem já instalou reconhece) e ganha **uma avenida e o furo do pino**, que é o que liga a marca à fiscalização urbana. A primeira versão tinha três ruas cruzadas; em 24 px (o tamanho do cabeçalho) viravam sujeira, então sobrou só a avenida.
+- **Dois defeitos achados no caminho:** o tema do Android usava três cores que não existiam no `colors.xml` (**o APK não compilava**), e as fontes eram baixadas do Google a cada abertura (sem internet, o aplicativo abria com outra tipografia).
+- **Verificação:** a marca do componente React e a do arquivo são rasterizadas e comparadas pixel a pixel; o mesmo desenho foi conferido em 24, 48 e 96 px.
 
 ### ✅ Passo 14 — Aplicativo instalável e funcionando sem conexão
 - **O que muda:** manifest, ícones (192, 512, recortável e iPhone), service worker, página de "sem conexão" e o aviso de versão nova. As fontes passaram a viajar dentro do aplicativo.
