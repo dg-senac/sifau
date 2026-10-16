@@ -172,9 +172,37 @@ Aqui é onde os dois bugs de SQL morrem **por construção**, em vez de remendo.
   3. **Verificação do aplicativo construído** (`npm run test:pwa:dist`): o service worker carrega a impressão digital de tudo o que foi construído; se os arquivos forem trocados depois, a verificação acusa — senão os fiscais ficariam presos numa versão antiga sem ninguém perceber.
 - **O que falta para você:** o botão "testar na hora" da landing page precisa de um endereço público em HTTPS onde o aplicativo esteja no ar (é de lá que o visitante instala). Enquanto isso não existir, o passo 16 tem o que mostrar apenas pelo APK.
 
-### ⬜ Passo 15 — Release do APK
-- **O que muda:** ligar o `build-apk.yml` que já existe a uma Release no GitHub, com APK versionado.
+### ✅ Passo 15 — Release do APK
+- **O que muda:** o APK passou a ter versão, assinatura e publicação. Etiqueta `v1.2.0` no Git gera o APK e publica a Release com o arquivo, a impressão digital (sha256) e as instruções de instalação. Rodar o workflow à mão gera o APK sem publicar.
 - **Resolve:** é o que a landing page vai apontar como botão principal.
+
+**A descoberta deste passo: o APK não estava sendo gerado — e não era de hoje.**
+
+O `package.json` fixava `tar@^7.5.22` para todos os pacotes (em `overrides`), e o CLI do Capacitor chama `require('tar').default.extract`. O `tar` 7 marca `__esModule` e não exporta `default`, então o Capacitor quebrava com
+
+```
+TypeError: Cannot read properties of undefined (reading 'extract')
+```
+
+e o build parava antes de chegar ao Gradle. **O último commit do `main` introduziu isso, e desde então nenhum APK saiu** — três dias, com o build vermelho, e o erro não aponta para a causa. Reproduzi aqui (`npx cap sync android` → `✖ update android - failed!`) antes de corrigir.
+
+A correção fixa `tar@^6.2.1` **só para o @capacitor/cli**. O aviso do `npm audit` na linha 6 do `tar` continua aparecendo, de propósito: o `tar` só é usado na hora de gerar o APK, para desempacotar o modelo que vem dentro do próprio pacote do Capacitor — não vai para o aplicativo do fiscal e não recebe arquivo de terceiros. O conserto de verdade é subir o Capacitor para a 8 (que usa `tar` 7), mudança de versão maior com verificação própria. A decisão está escrita no README, no lugar onde alguém vai olhar antes de "corrigir" o audit.
+
+Duas correções que impediriam a compilação mesmo com o Capacitor de volta:
+- A abertura do aplicativo colocava um desenho **vetorial** dentro de `<bitmap>` — o aapt2 recusa, é erro de compilação. Agora é `<item android:drawable=...>`, com uma versão própria para o Android 5 (onde `android:gravity` em camada ainda não existe).
+- Verificação nova, `npm run test:android`, que pega as três classes de defeito que já quebraram o APK **sem precisar de SDK de Android**: o Capacitor consegue rodar, todo recurso citado pelo tema existe (`@color/colorPrimary` faltando foi o primeiro defeito), e o ícone é o do SIFAU e não o quadrado vazio do modelo.
+
+**Verificação: o APK foi construído de verdade.** Sem permissão para disparar o workflow por aqui, usei um gatilho temporário de pull request, olhei o resultado e removi o gatilho antes de seguir (o histórico não guardou a sonda). O que ficou provado, com o veredito do GitHub:
+
+| Passo do workflow | Resultado |
+|---|---|
+| `npm ci`, verificação de segredos, versão, build web, `cap sync` | ✅ |
+| `./gradlew assembleDebug` (sem a chave de publicação) | ✅ |
+| Conferência dentro do APK com `aapt2` (pacote, versão, `versionCode`) | ✅ |
+| Artefato publicado | ✅ `sifau-0.0.1` · 4,83 MB |
+| Publicação da Release | ⏭️ pulada, como deve ser num teste |
+
+- **O que falta para distribuir de verdade:** a chave de assinatura do órgão. O run avisou em letra clara: *"Sem a chave de assinatura: o APK sai de TESTE (assinado com a chave de depuração). Serve para conferir o aplicativo, não para distribuir."* Os segredos `ANDROID_KEYSTORE_*` ainda não estão configurados no repositório, e os comandos para gerar a chave estão no `README.md`.
 
 ### ⬜ Passo 16 — Landing page (repo separado)
 - **O que muda:** hero com prints reais do app, seção de recursos, **botão principal = baixar APK** / **secundário = testar o PWA**, FAQ, contato, link da política de privacidade.

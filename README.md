@@ -135,6 +135,24 @@ sai assinado com a chave de teste — serve para conferir, **não para distribui
 um aplicativo assinado com a chave de teste não pode ser atualizado por um
 assinado com a chave oficial, e quem instalar teria de desinstalar antes.
 
+### Como criar a chave de assinatura (uma vez, 2 minutos)
+
+```bash
+keytool -genkeypair -v -keystore sifau-release.jks -alias sifau \
+  -keyalg RSA -keysize 4096 -validity 10000
+base64 -w0 sifau-release.jks > sifau-release.jks.base64
+```
+
+Depois, em **Settings → Secrets and variables → Actions**, crie quatro segredos:
+`ANDROID_KEYSTORE_BASE64` (o conteúdo do arquivo `.base64`),
+`ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` (`sifau`) e
+`ANDROID_KEY_PASSWORD`. **Guarde o `.jks` e as senhas em cofre** e não os envie
+ao Git: o repositório já os ignora, e a verificação `npm run test:android`
+reprova se algum arquivo de chave aparecer sob controle do Git.
+
+Opção extra: `VITE_APP_URL` pode ser cadastrado em **Variables** (não em
+Secrets) para o link de recuperação de senha apontar para o endereço público.
+
 > **A chave de assinatura é insubstituível.** Se ela for perdida, não existe
 > forma de publicar atualização para quem já instalou o aplicativo — só publicar
 > outro aplicativo, com outro identificador. Guarde o arquivo `.jks` e as senhas
