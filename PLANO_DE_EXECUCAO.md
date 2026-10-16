@@ -83,10 +83,14 @@ Aqui é onde os dois bugs de SQL morrem **por construção**, em vez de remendo.
 - **Segunda parte do passo (a tabela do passo 7):** o desenho que você aprovou previa que o passo 8 entregasse o schema consolidado **com a tabela `anexos`** — e eu havia commitado só as correções de B1/B2. A tabela entrou agora: `SETUP_COMPLETO.sql` + migration `20261014000000_create_anexos.sql`, com os 5 vínculos por FK, o CHECK de vínculo único, `momento` (`antes`/`depois`), RLS e grants por coluna. **19 testes próprios** (`tests/suites/05-anexos.test.mjs`) cobrem as regras; suíte total: **81 testes ✓ nos dois caminhos**. O aplicativo ainda **não** usa a tabela nova — isso é o passo 10, de propósito, para não mexer no app em duas frentes ao mesmo tempo.
 - **Limpeza que a correção do B2 permitiu:** o cenário de teste tinha um contorno que ativava o fiscal do administrador "na mão", porque `bootstrap_admin` não ativava. Removido — agora as suítes **dependem** da correção. Se o B2 voltar, elas falham em massa, em vez de passarem por causa do contorno.
 
-### ⬜ Passo 9 — Aplicar no Supabase e migrar o que existir
-- **O que muda:** rodar o schema novo no projeto e, se houver dado que valha a pena, um script de migração pontual.
+### 🔄 Passo 9 — Aplicar no Supabase (depende de você)
+- **O que muda:** rodar o schema novo no projeto. Como você vai refazer do zero e ainda não existe usuário em produção, a recomendação é **projeto novo** — o schema fica exatamente o que está escrito no script, sem sobra do histórico.
 - **Verificação:** eu não alcanço seu Supabase daqui, então: eu te entrego o SQL + um **roteiro de verificação** com as consultas exatas para você rodar e colar o resultado. Se algum passo falhar, ajusto com base no retorno.
-- **Risco:** 🟠 depende de você executar. Faço backup-guiado antes.
+- **Risco:** 🟠 depende de você executar.
+- **Entrega:** `supabase/ROTEIRO_APLICACAO.md` — 4 etapas (criar projeto, colar o script, criar o administrador, apontar o app) e 6 consultas de conferência, com o resultado esperado de cada uma **medido**, não estimado. O roteiro recomenda projeto novo e lista as consequências honestas: as contas de fiscal atuais não existem mais, cada fiscal se cadastra de novo, e o app precisa apontar para a URL nova (2 linhas de `.env`).
+- **Preparação que eu fiz antes de te pedir para rodar** (para o roteiro não ser "confie em mim"):
+  - Descobri e corrigi um defeito que só apareceria na sua mão: **o `SETUP_COMPLETO.sql` não era re-executável**. Um `CREATE TRIGGER` sem `DROP` antes fazia a segunda execução parar no meio — exatamente o que aconteceria se você rodasse, desse algum erro e tentasse de novo. Agora existe `npm run test:sql:rerun`, que aplica o arquivo duas vezes e compara o schema antes/depois das duas rodadas (7 dimensões, incluindo os 6 gatilhos).
+  - A comparação por retrato foi extraída para `tests/snapshot.mjs` e passou a incluir **gatilhos** — a automação que ninguém lembra que existe até ela sumir.
 
 **✅ Fim da Fase C:** banco sem B1 nem B2, comprovado por teste, com schema legível.
 

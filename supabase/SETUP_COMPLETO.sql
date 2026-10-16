@@ -683,6 +683,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+DROP TRIGGER IF EXISTS trigger_atualizar_documento_timestamp ON public.documentos;
 CREATE TRIGGER trigger_atualizar_documento_timestamp
   BEFORE UPDATE ON public.documentos
   FOR EACH ROW
@@ -2199,6 +2200,11 @@ AS $$
 $$;
 REVOKE ALL ON FUNCTION public.attachment_links_belong_to_user(uuid, uuid, uuid, uuid, uuid) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.attachment_links_belong_to_user(uuid, uuid, uuid, uuid, uuid) TO authenticated;
+
+DROP POLICY IF EXISTS anexos_select_owner_admin_or_linked ON public.anexos;
+DROP POLICY IF EXISTS anexos_insert_owner ON public.anexos;
+DROP POLICY IF EXISTS anexos_update_owner_or_admin ON public.anexos;
+DROP POLICY IF EXISTS anexos_delete_owner_or_admin ON public.anexos;
 
 -- SELECT: o dono, o administrador, ou o fiscal vinculado ao alvo. O terceiro
 -- caso é o que deixa o fiscal designado ver as fotos "antes" da ocorrência que

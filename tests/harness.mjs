@@ -42,6 +42,16 @@ function readSql(relativePath) {
 }
 
 /**
+ * Aplica um arquivo .sql do repositório no banco informado, com os mesmos
+ * `stubExtensions` usados na criação. Serve para reaplicar um script (ver
+ * tests/apply-twice.mjs) sem duplicar a lógica de leitura e de stub.
+ */
+export async function applyRepoSql(handle, relativePath) {
+  const { sql } = stubExtensions(readSql(relativePath));
+  await handle.exec(sql);
+}
+
+/**
  * Cria um banco limpo com o schema do SIFAU aplicado.
  *
  * @param {{ source?: 'setup' | 'migrations' }} options
