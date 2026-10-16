@@ -64,43 +64,62 @@ Veja [`tests/README.md`](tests/README.md) para a convenção de leitura do resul
 
 ### Módulo de documentos
 
-A galeria de documentos guarda fotos, arquivos e imagens de assinatura vinculados a
-uma ocorrência, vistoria ou ordem de serviço. O acesso é restrito ao fiscal
-proprietário (o administrador enxerga para auditoria), e a migration
+A galeria é a biblioteca do fiscal: ele envia foto, PDF ou Word — digitalização de
+documento, na maior parte dos casos, e é por isso que ela mantém 1920 px enquanto
+as fotos de campo usam 1280 px. O acesso é restrito ao fiscal proprietário (o
+administrador enxerga para auditoria), e a migration
 `20261012100000_harden_documents.sql` restringe os registros e remove a falsa
 validação de certificado.
 
-> **Limites importantes.** Os arquivos são gravados em `base64` nas colunas do banco, e
-> a interface limita cada upload a 5 MB. A biblioteca de documentos é o último ponto do
-> app nesse modelo: as **fotos de campo** já saem do banco (veja abaixo). Em base64,
-> cada arquivo cresce cerca de 33% e entra em toda consulta que use `select('*')`.
+O arquivo da galeria fica no bucket, em `documentos.arquivo_path`; o vínculo com
+ocorrência, vistoria ou ordem de serviço existe no banco e hoje o aplicativo grava
+os documentos sem vínculo.
+
+> **Limites importantes.** Cada arquivo tem no máximo 5 MB, e nenhum deles é
+> gravado no banco: desde a migração para o Storage, **todas** as colunas de
+> arquivo — fotos de campo, assinatura do autuado, biblioteca de documentos e
+> anexos da conversa — guardam só o caminho no bucket (veja abaixo). Gravar
+> arquivo dentro da linha continua possível em tese e é **recusado por gatilho**.
 >
 > Assinatura manuscrita é apenas uma **imagem** colhida na tela. Não é validação
 > criptográfica, não é certificado digital e **não constitui assinatura digital
 > qualificada** nos termos da ICP-Brasil. Não use esse recurso como prova de
 > autoria sem respaldo jurídico próprio.
 
-### Fotos de campo no Storage
+### Arquivos no Storage
 
-As fotos de ocorrência e de vistoria **não ficam no banco**. Elas vão para o
-bucket privado `sifau-anexos` e a linha guarda só o caminho
-(`{fiscal_id}/{ano}/{mes}/{anexo_id}.jpg`); a descrição de cada arquivo — tipo,
-momento, tamanho, dimensões — fica em `public.anexos`.
+Nenhum arquivo fica no banco. Todos vão para o bucket privado `sifau-anexos` e a
+linha guarda só o caminho (`{fiscal_id}/{ano}/{mes}/{anexo_id}.extensao`) — a
+exibição pede uma URL assinada, que vale 1 hora. A descrição do arquivo de um
+registro (tipo, momento, tamanho, dimensões) fica em `public.anexos`; as fotos de
+ocorrência e vistoria continuam nas colunas `fotos`/`fotos_depois`, agora com o
+caminho em vez do conteúdo.
 
-Medido em PostgreSQL real, um ciclo de fiscalização (ocorrência com 5 fotos e
-vistoria com 3) ocupava **7.830 KB** de banco. Com o arquivo no Storage, o ciclo
+Em base64, cada arquivo crescia cerca de 33% e entrava em toda consulta que usasse
+`select('*')`. Medido por linha, em PostgreSQL real: documento digitalizado de
+1 MB = **1.425 KB** de banco; anexo de conversa de 250 KB = **356 KB**; assinatura
+de 30 KB = **50 KB**; o caminho no lugar do arquivo = **4 KB**. No plano gratuito
+(500 MB), cerca de **350 documentos de 1 MB** encheriam a cota.
+
+**Fotos de campo.** Medido em PostgreSQL real, um ciclo de fiscalização
+(ocorrência com 5 fotos e vistoria com 3) ocupava **7.830 KB** de banco. Com o arquivo no Storage, o ciclo
 ocupa **9 KB** — o banco deixa de ser o limite: o plano gratuito sai de ~63
 ciclos para dezenas de milhares. O limite passa a ser o Storage (1 GB no plano
 gratuito, cerca de 4.000 fotos a 250 KB).
 
 Como o conteúdo saiu da linha, existe um gatilho no banco que **recusa** qualquer
-valor começando com `data:` nas colunas de foto: voltar ao base64 não é uma
-decisão que passe despercebida.
+valor começando com `data:` nas cinco colunas de arquivo (`fotos`,
+`fotos_depois`, `assinatura_autuado`, `arquivo_path` e `attachments`): voltar ao
+base64 não é uma decisão que passe despercebida.
+
+> **Convivência:** um registro só existe se o arquivo subiu antes. Falha de upload
+> leva o registro inteiro para a fila (online) ou mantém o item pendente (offline),
+> em vez de gravar uma linha apontando para arquivo que não existe.
 
 > Para os arquivos serem enviados, o projeto Supabase precisa do bucket e das
-> políticas de `storage.objects` — eles estão no `SETUP_COMPLETO.sql` e na
-> migration `20261015000000_photos_to_storage.sql`. Sem isso o app funciona e a
-> ocorrência entra na fila, mas a foto não sobe.
+> políticas de `storage.objects` — eles estão no `SETUP_COMPLETO.sql` e nas
+> migrations `20261015000000` a `20261018000000`. Sem isso o app funciona e o
+> registro entra na fila, mas o arquivo não sobe.
 
 ## Segurança e operação
 

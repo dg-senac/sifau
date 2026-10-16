@@ -39,15 +39,25 @@ esconder regressão nova.
 ```
 tests/
 ├── README.md              # este arquivo
-├── supabase-sim.sql       # ambiente Supabase mínimo (auth.users, auth.uid, roles)
+├── supabase-sim.sql       # ambiente Supabase mínimo (auth.users, auth.uid, roles, Storage)
 ├── harness.mjs            # sobe o banco, aplica o schema, executa como usuário
 ├── fixtures.mjs           # cenário base (admin, pendente, ativos) e payloads
+├── snapshot.mjs           # retrato do schema em 8 dimensões (tabelas, colunas, políticas…)
+├── compare-install-paths.mjs # projeto novo × projeto migrado: o mesmo schema?
+├── apply-twice.mjs        # o script é re-executável? (aplicar duas vezes não muda nada)
+├── check-query-columns.mjs   # nenhuma tela pede `select('*')` em tabela de arquivo
 ├── run.mjs                # runner e mini framework de teste
 └── suites/
     ├── 01-acesso.test.mjs            # RLS, papéis, negação de acesso
     ├── 02-administracao.test.mjs     # bootstrap, aprovação, triagem, redistribuição
-    └── 03-fluxo-operacional.test.mjs # ocorrência → vistoria → auditoria
+    ├── 03-fluxo-operacional.test.mjs # ocorrência → vistoria → auditoria
+    ├── 04-documentos.test.mjs        # biblioteca do fiscal, acesso restrito ao dono
+    ├── 05-anexos.test.mjs            # modelo único de anexos e regra de vínculo
+    └── 06-storage.test.mjs           # bucket privado, pasta por fiscal e anti-base64
 ```
+
+`npm run verify` roda tudo em sequência: tipo, lint, build, consultas, as duas
+suítes de banco, a paridade entre caminhos e a re-execução do script.
 
 Cada suíte roda em um **banco limpo e independente**, para que uma não contamine a
 seguinte. Se o schema não puder ser aplicado, a execução para e aponta o arquivo e a
@@ -78,8 +88,12 @@ montar cenário ou inspecionar o resultado, nunca para verificar segurança.
 
 - **Extensões:** o PGlite não traz `pgcrypto`/`uuid-ossp`. O harness substitui as
   declarações e avisa quais foram simuladas. No Supabase elas são nativas.
-- **Storage:** não há bucket simulado. Quando as fotos forem para o Supabase
-  Storage, os testes de arquivo vão precisar de uma camada a mais.
+- **Storage:** o `supabase-sim.sql` cria `storage.buckets` e `storage.objects` com
+  RLS ligada, o suficiente para provar as políticas do bucket e o caminho por
+  fiscal (por isso os negativos são confiáveis: sem RLS o teste passaria por
+  motivo errado). O que **não** é simulado é o envio real de bytes, a validade da
+  URL assinada e os limites de tamanho/tipo do serviço — isso só o Supabase real
+  responde.
 - **Realtime, Auth e Edge Functions:** fora do escopo. Aqui se testa banco.
 - **Não substitui o teste no Supabase real.** Antes de aplicar em produção, rode o
   script em um projeto de staging.

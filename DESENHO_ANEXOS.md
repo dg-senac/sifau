@@ -163,3 +163,42 @@ Testei a suíte **ao contrário**: enfraquecendo a política de INSERT, a de SEL
 o CHECK, os testes correspondentes falham — ou seja, eles medem o que dizem medir.
 
 **Um ponto que vale sua atenção:** a redução de qualidade das fotos que você aprovou (1280 px / 250 KB) será aplicada **também** às fotos de documento na galeria, que hoje usa 1920 px. Se a galeria servir para digitalizar documento com texto miúdo, 1280 px pode ser pouco para leitura. Se for esse o uso, mantenho 1920 px só nela. Me diga se a galeria é para registro fotográfico ou para digitalização de documento.
+
+## 9. O que a parte 2 acrescentou (assinatura, galeria e conversa)
+
+As três colunas que sobrou migraram nos passos 2a, 2b e 2c do passo 10. Cada uma
+trouxe uma diferença que vale registrar, porque nenhuma delas era previsível no
+desenho:
+
+**A assinatura do autuado guardou o NOME da coluna.** `autos_infracao.assinatura_autuado`
+passou a guardar o caminho, mas continua se chamando `assinatura_autuado`. Aqui
+manter o nome foi deliberado: o campo é do domínio (o auto tem uma assinatura do
+autuado, e o PDF imprime ela), e quem lê `assinatura_autuado` num auto espera
+achar a assinatura. `documentos.arquivo_data` foi o contrário e mudou de nome,
+porque `arquivo_data` descrevia o conteúdo que deixou de existir.
+
+**A galeria mostrou que renomear coluna não renomeia o que deriva dela.**
+`documentos.arquivo_data` virou `arquivo_path`, mas a restrição NOT NULL
+continuou se chamando `documentos_arquivo_data_not_null` — nome que mente e que
+diverge de um banco criado do zero. Foi a conferência de paridade entre os dois
+caminhos de instalação que pegou, não uma tela quebrada. A migração agora
+renomeia a restrição junto, e a suíte verifica que nenhuma restrição sobrou com
+o nome antigo.
+
+**A conversa ficou de fora da tabela `anexos`, de propósito.** `admin_messages.attachments`
+guarda a lista de caminhos da conversa; não vira linha em `anexos`. São dois
+motivos: a tela lê os anexos junto da mensagem (uma consulta, sem junção), e o
+mesmo arquivo em duas tabelas seriam duas versões da mesma verdade. `documentos`
+segue a mesma lógica: biblioteca do fiscal, casa própria.
+
+**Limitação conhecida, ainda aberta:** o anexo enviado pelo administrador fica na
+pasta dele, porque a política do bucket exige que o primeiro nível do caminho
+seja o id de quem está autenticado. O fiscal, portanto, não lê o arquivo — e é o
+que a tela dele já dizia antes desta migração ("Anexos disponíveis somente no
+painel administrativo"). Corrigir isso é acrescentar uma política de leitura para
+o destinatário da mensagem e passar a exibir os anexos na tela do fiscal. Não foi
+feito agora porque muda o que o app entrega ao fiscal, e essa é uma decisão de
+quem usa o sistema, não de quem escreve o código.
+
+**Sobre a medida das fotos:** mantive 1920 px na galeria (é digitalização de
+documento, inclusive PDF e Word) e 1280 px nas fotos de campo, como combinado.

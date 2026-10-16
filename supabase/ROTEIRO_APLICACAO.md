@@ -5,7 +5,7 @@ Este roteiro é para **você executar**, porque eu não alcanço o seu Supabase 
 São 4 etapas, uns 15 minutos. No fim tem as consultas de conferência — me manda o
 resultado delas e eu confirmo se está tudo certo.
 
-O script é o `supabase/SETUP_COMPLETO.sql` (2.252 linhas, 92 KB).
+O script é o `supabase/SETUP_COMPLETO.sql` (2514 linhas, 103 KB).
 
 ---
 
@@ -15,7 +15,7 @@ O script é o `supabase/SETUP_COMPLETO.sql` (2.252 linhas, 92 KB).
 usar o projeto atual, o schema novo entra *em cima* do antigo — e como o histórico teve
 37 migrations, sobra objeto que ninguém lembra que existe (função órfã, política antiga,
 coluna morta). Num projeto vazio, o que existe é exatamente o que está escrito no
-script: 19 tabelas, 25 funções, 38 políticas, 6 gatilhos.
+script: 19 tabelas, 26 funções, 38 políticas, 11 gatilhos e 1 bucket.
 
 Consequências de criar um projeto novo, todas conhecidas e aceitáveis agora:
 
@@ -26,9 +26,12 @@ Consequências de criar um projeto novo, todas conhecidas e aceitáveis agora:
   fica com app apontando para o lugar errado.
 - **Não apague o projeto antigo.** Deixe parado como backup por um tempo.
 
-Se você preferir manter o projeto atual, o script também funciona (ele é re-executável e
-não apaga dado), mas aí sobra o lixo histórico — me avise que eu te passo as consultas
-para listar o que ficou sobrando.
+Se você preferir manter o projeto atual, o caminho é **aplicar as migrations**
+(`supabase/migrations/*.sql`, na ordem dos nomes): elas foram escritas exatamente para
+entrar em cima de um banco que já existe. O script grande eu valido para projeto vazio —
+sobre o banco com o histórico antigo ele não foi testado, e prefiro te dizer isso a te
+deixar descobrir. Em qualquer um dos casos, o lixo histórico continua lá; me avise que eu
+passo as consultas para listar o que ficou sobrando.
 
 ---
 
@@ -50,10 +53,11 @@ para listar o que ficou sobrando.
 4. Deve terminar com **Success. No rows returned**. Avisos do tipo `NOTICE: Política
    permissiva removida...` são esperados e são o script limpando o scaffold antigo.
 
-> O script já cria o **bucket privado das fotos** (`sifau-anexos`) e as políticas de
-> acesso a ele. Não é preciso criar bucket pelo painel do Storage, e não vem mais
-> nenhum SQL depois deste: o que falta do módulo de documentos é ajuste no app, sem
-> banco.
+> O script já cria o **bucket privado dos arquivos** (`sifau-anexos`) e as políticas de
+> acesso a ele. Não é preciso criar bucket pelo painel do Storage, nem rodar mais
+> nenhum SQL depois deste: ele já traz os quatro blocos que migraram o arquivo para
+> fora do banco (fotos, assinatura, galeria e conversa) e os cinco gatilhos que recusam
+> base64 de volta.
 
 > Se der erro, **não faça nada além de me mandar a mensagem completa** (ela costuma
 > dizer a linha). O script é re-executável: rodar de novo do começo não duplica nada —
@@ -138,6 +142,17 @@ SELECT id, public, file_size_limit FROM storage.buckets WHERE id = 'sifau-anexos
 -- 8. As políticas do bucket (esperado: 4 linhas — uma de cada comando)
 SELECT policyname, cmd FROM pg_policies
 WHERE schemaname = 'storage' AND tablename = 'objects' ORDER BY policyname;
+
+-- 9. Arquivo fora do banco (esperado: 10 linhas — as 5 colunas que guardam
+--    CAMINHO e os 5 gatilhos que recusam base64 nelas)
+SELECT 'coluna' AS tipo, table_name || '.' || column_name AS nome
+FROM information_schema.columns
+WHERE table_schema = 'public'
+  AND column_name IN ('fotos', 'fotos_depois', 'assinatura_autuado', 'arquivo_path', 'attachments')
+UNION ALL
+SELECT 'gatilho', tgname FROM pg_trigger
+WHERE NOT tgisinternal AND tgname LIKE 'trg_%_sem_base64'
+ORDER BY 1, 2;
 ```
 
 ---
@@ -158,8 +173,20 @@ pode ser arquivado ou removido sem tocar no registro.
 Para o app subir arquivo é preciso que o bucket e as políticas deste script existam —
 sem eles, a ocorrência entra e a foto **fica na fila** do aparelho, com aviso na tela.
 
-## O que ainda falta (sem SQL novo)
+## O que já está pronto no app
 
-A **biblioteca de documentos** (galeria), os anexos do chat do painel e a assinatura do
-autuado ainda gravam arquivo dentro do banco. É ajuste no app — nenhum deles precisa de
-mudança no banco que você acabou de criar.
+Nenhuma coluna do sistema guarda arquivo dentro da linha, e o lado do aplicativo já
+acompanha: fotos de campo (ocorrência e vistoria), assinatura do autuado, biblioteca de
+documentos e anexos da conversa sobem para o bucket antes de a linha existir — online e
+offline —, e a exibição pede URL assinada na hora.
+
+**Duas coisas continuam sendo decisão sua, não minha:**
+
+1. **O fiscal não abre o anexo que o administrador manda no chat.** O arquivo fica na
+   pasta de quem enviou (é o que a política do bucket permite), e a tela dele já dizia
+   "Anexos disponíveis somente no painel administrativo" antes desta migração. Dar
+   acesso ao destinatário é acrescentar uma política de leitura e exibir o anexo na tela
+   do fiscal.
+2. **A tabela `assinaturas_digitais` nunca recebeu uma linha do aplicativo** — existe
+   para registrar que o sistema NÃO valida certificado digital. Tirar é uma migração de
+   poucas linhas, mas apagar tabela é irreversível: só faço com o seu ok.
