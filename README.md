@@ -1,6 +1,6 @@
 # SIFAU
 
-Aplicativo web/mobile para registro, atribuição e fiscalização de ocorrências urbanas. A versão principal fica na raiz do repositório; ela usa Supabase Auth, PostgreSQL/RLS, sincronização offline e geração de auto de infração em PDF.
+Aplicativo web/mobile para registro, atribuição e fiscalização de ocorrências urbanas. Usa Supabase Auth, PostgreSQL/RLS, sincronização offline, galeria de documentos e geração de auto de infração em PDF.
 
 ## Executar localmente
 
@@ -48,9 +48,38 @@ supabase/migrations/*.sql
 
 A migration `20261012090000_harden_access_and_audit.sql` inclui mudanças de RLS, cadastro pendente, auditoria e RPCs. Faça backup e revise políticas/dados antes de aplicar em produção. A migration elimina localizações duplicadas por fiscal para manter somente a mais recente.
 
-### Cópia opcional com documentos
+### Testes do banco
 
-`project/` é uma cópia do app sincronizada com a versão principal e acrescenta a galeria de documentos. Para instalar **essa** cópia, use [`project/supabase/SETUP_COMPLETO.sql`](project/supabase/SETUP_COMPLETO.sql) e rode os comandos npm dentro de `project/`. O módulo restringe documentos ao fiscal proprietário; PDFs/assinaturas manuscritas não constituem validação de certificado nem assinatura digital qualificada.
+O schema é verificado contra um PostgreSQL real, com um ambiente Supabase simulado
+(`auth.users`, `auth.uid`, roles `anon`/`authenticated`), sem precisar de Docker nem
+de credenciais:
+
+```bash
+npm run test:sql              # testa supabase/SETUP_COMPLETO.sql
+npm run test:sql:migrations   # testa supabase/migrations/*.sql em ordem
+npm run test:sql:parity       # confere que os dois caminhos geram o mesmo schema
+```
+
+Veja [`tests/README.md`](tests/README.md) para a convenção de leitura do resultado.
+
+### Módulo de documentos
+
+A galeria de documentos guarda fotos, arquivos e imagens de assinatura vinculados a
+uma ocorrência, vistoria ou ordem de serviço. O acesso é restrito ao fiscal
+proprietário (o administrador enxerga para auditoria), e a migration
+`20261012100000_harden_documents.sql` restringe os registros e remove a falsa
+validação de certificado.
+
+> **Limites importantes.** Os arquivos são gravados em base64 nas colunas do banco, e
+> a interface limita cada upload a 5 MB. Isso é adequado a volumes pequenos: para uso
+> em produção contínua, migre os arquivos para o Supabase Storage com políticas de
+> bucket antes de ampliar qualquer limite — em base64, cada foto cresce cerca de 33%
+> e entra em toda consulta que use `select('*')`.
+>
+> Assinatura manuscrita é apenas uma **imagem** colhida na tela. Não é validação
+> criptográfica, não é certificado digital e **não constitui assinatura digital
+> qualificada** nos termos da ICP-Brasil. Não use esse recurso como prova de
+> autoria sem respaldo jurídico próprio.
 
 ## Segurança e operação
 

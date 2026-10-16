@@ -12,29 +12,32 @@
 
 O objetivo desta fase é eliminar a ambiguidade "qual é o app?" e criar a rede de segurança que vai me deixar provar cada mudança no banco.
 
-### ⏸️ Passo 1 — Confirmar a versão canônica
+### ✅ Passo 1 — Confirmar a versão canônica
 - **Decisão sua:** raiz + port dos documentos (minha recomendação) ou `project/`.
 - **Por que primeiro:** tudo depois depende disso. Errar aqui significa fazer todo o resto duas vezes.
 - **Entrego:** nada de código. Só o seu OK.
+- **Resultado:** raiz confirmada como canônica, com port do módulo de documentos.
 
-### ⬜ Passo 2 — Rede de segurança (harness de teste do banco)
+### ✅ Passo 2 — Rede de segurança (harness de teste do banco)
 - **O que é:** versionar no repo o harness que usei na análise — sobe PostgreSQL real (PGlite) com `auth.users`/`auth.uid()`/roles simuladas, aplica o SQL e roda a bateria: cadastro → aprovação → ocorrência → vistoria → auditoria → **testes de negação de acesso**.
 - **Por que antes de tudo:** é ele que vai provar que o schema reconstruído não reintroduziu bug. Sem isso, refazer o banco é fé, não engenharia. Foi exatamente a ausência dele que deixou B1 e B2 passarem.
 - **Arquivos novos:** `supabase/tests/` + script `npm run test:sql`.
-- **Verificação:** roda e fica **vermelho nos 2 pontos que já conheço** (auditoria legível + bootstrap). Vermelho aqui é a prova de que o teste funciona.
+- **Verificação:** ✅ **57 testes passam**, e os defeitos ficam visíveis como `⚠ CONHECIDO` em vez de escondidos.
+- **Resultado:** `npm run test:sql`, `test:sql:migrations` e `test:sql:parity`. Os dois caminhos de instalação produzem schema idêntico, e o teste de paridade falha se voltarem a divergir.
 
-### ⬜ Passo 3 — Portar o módulo de documentos para a raiz
+### ✅ Passo 3 — Portar o módulo de documentos para a raiz
 - **O que muda:** copiar 4 arquivos de `project/src/` → `src/`; 3 patches mínimos (1 rota em `App.tsx`, 1 link em `AppShell.tsx`, 1 item em `MoreScreen.tsx`); tipos em `types.ts`; estilos em `index.css`; 2 migrations de documentos em `supabase/migrations/`.
 - **Resolve:** a existência de duas cópias do app.
 - **Verificação:** `typecheck` + `lint` + `build` + preview local da tela de login e do menu.
 - **Risco:** baixo — a costura já existe, é só reconectar.
+- **Resultado:** módulo portado. Nenhuma regra de estilo perdida (357 vs 357), `.unread-dot` morto e `.photo-error` conflitante descartados, e `SETUP_COMPLETO.sql` passou a criar as tabelas de documentos para não divergir das migrations. Nova suíte cobre o isolamento dos arquivos.
 
-### ⬜ Passo 4 — Remover `project/`
-- **O que muda:** `git rm -r project/` (depois do passo 3 verde) e consolidar os 3 `.md` sobrepostos (`README` + `ADMIN_SETUP` + `GUIA`) num `README` único com seção de operação.
+### ✅ Passo 4 — Remover `project/`
+- **O que muda:** `git rm -r project/` (depois do passo 3 verde) e incorporar a documentação útil ao `README` principal.
 - **Resolve:** 112 de 218 arquivos duplicados, 1,2 MB de espelho, e a causa raiz de "não sei qual app é o oficial".
-- **Verificação:** `git ls-files | wc -l` deve cair de 218 para ~110.
+- **Verificação:** ✅ arquivos versionados caíram de **238 para 126**; a documentação útil do `project/README.md` (limite de 5 MB, recomendação de Storage e a ressalva de que assinatura manuscrita não é assinatura digital qualificada) foi incorporada ao README principal.
 
-**✅ Fim da Fase A:** um app só, uma árvore só, com teste automatizado do banco rodando.
+**✅ Fim da Fase A — CONCLUÍDA:** um app só, uma árvore só, com teste automatizado do banco rodando e paridade verificada entre os dois caminhos de instalação.
 
 ---
 
