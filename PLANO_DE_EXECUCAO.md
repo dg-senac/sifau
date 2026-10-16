@@ -43,19 +43,21 @@ O objetivo desta fase é eliminar a ambiguidade "qual é o app?" e criar a rede 
 
 ## FASE B — Fase 0: o app e o banco sem bug
 
-### ⬜ Passo 5 — Parar de baixar fotos em toda listagem
+### ✅ Passo 5 — Parar de baixar fotos em toda listagem
 - **O que muda:** trocar `select('*')` por colunas explícitas nas telas de lista, deixando `fotos`/`fotos_depois` de fora.
 - **Arquivos:** `HomeScreen.tsx:30`, `MapScreen.tsx:29`, `Dashboard.tsx:208`, `AdminScreen.tsx:256/312`, `Inspection.tsx:30`, `Orders.tsx:248`.
 - **Resolve:** ~228 MB no Início e ~684 MB no mapa caem para poucos KB. **É o maior ganho de qualidade percebida por menor esforço de todo o plano.**
 - **Verificação:** preview local + contagem das colunas retornadas.
-- **Risco:** baixo, mas exige cuidado nas telas que **usam** as fotos (`OccurrenceDetail`, `AutoInfracao`) — essas continuam com `*` de propósito.
+- **Risco:** baixo, mas exigiu cuidado nas telas que usam as fotos.
+- **Resultado:** as fotos **nunca eram exibidas em nenhuma tela** — só gravadas. Isso tornou a restrição segura. Verificado que o tipo do supabase-js degrada se a constante não for literal de texto, e o comentário em `lib/columns.ts` registra isso. Guarda em `tests/check-query-columns.mjs` reprova se o padrão voltar.
 
-### ⬜ Passo 6 — Higiene rápida
+### ✅ Passo 6 — Higiene rápida
 - **O que muda:** tirar `.env.production` do git (mantendo no disco local); `index.html` → liberar zoom (`maximum-scale`/`user-scalable`), corrigir `theme-color` para `#0d428b`, trocar o favicon placeholder.
 - **Resolve:** risco de configuração e a barreira de acessibilidade de zoom.
-- **Verificação:** build + inspeção do HTML gerado.
+- **Resultado:** `.env.production` fora do índice (segue no disco e ignorado); zoom liberado (WCAG 1.4.4); `theme-color` alinhado ao azul da marca; favicon novo (escudo + confirmação no gradiente da marca), conferido a 16/32/48/128 px.
+- **Observação:** o favicon é provisório — será substituído pela identidade final do passo 13.
 
-**✅ Fim da Fase B:** app sem os bugs de desempenho conhecidos; banco ainda com B1 e B2 (morrem na Fase C).
+**✅ Fim da Fase B — CONCLUÍDA:** app sem os bugs de desempenho conhecidos; banco ainda com B1 e B2 (morrem na Fase C). `npm run verify` roda typecheck, lint, guarda de colunas, as duas suítes de SQL e a paridade de schema.
 
 ---
 
