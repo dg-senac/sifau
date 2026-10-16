@@ -86,7 +86,24 @@ export function occurrencePayload(fiscalId, overrides = {}) {
   };
 }
 
-/** Uma foto válida e minúscula, no formato que o app grava (data URL base64). */
+/**
+ * Caminho de um arquivo no bucket `sifau-anexos`, no formato que o app grava
+ * depois do passo 10: `{fiscal_id}/{ano}/{mes}/{anexo_id}.jpg`.
+ *
+ * É ISTO que as colunas `ocorrencias.fotos` e `vistorias.fotos_depois` guardam
+ * agora: o caminho, nunca o arquivo.
+ */
+export const SAMPLE_STORAGE_PATH =
+  '33333333-3333-4333-8333-333333333333/2026/10/foto-de-teste.jpg';
+
+/**
+ * Arquivo EMBUTIDO (data URL base64) — o formato antigo.
+ *
+ * Continua legítimo em `documentos.arquivo_data`, que só migra para o Storage
+ * depois. Nas colunas de foto de campo é RECUSADO pelo gatilho
+ * `reject_inline_base64`, e existe teste para isso: foi o base64 dentro da
+ * linha que fez o banco encher em ~63 ciclos de fiscalização.
+ */
 export const SAMPLE_PHOTO = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQ==';
 
 /**

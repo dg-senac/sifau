@@ -6,7 +6,7 @@
 // acessa nada, e não existe porta lateral de autoaprovação.
 // ============================================================================
 
-import { IDS, seedScenario, createOccurrence, SAMPLE_PHOTO } from '../fixtures.mjs';
+import { IDS, seedScenario, createOccurrence, SAMPLE_STORAGE_PATH } from '../fixtures.mjs';
 
 export default {
   name: 'acesso e RLS',
@@ -179,7 +179,7 @@ export default {
     });
 
     await t.test('ocorrência com foto anexada continua restrita ao pendente', async () => {
-      const comFoto = await createOccurrence(db, IDS.active, { fotos: [SAMPLE_PHOTO] });
+      const comFoto = await createOccurrence(db, IDS.active, { fotos: [SAMPLE_STORAGE_PATH] });
       t.ok(comFoto, 'ocorrência com foto gravada');
 
       const anexadas = await db.owner(

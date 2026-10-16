@@ -14,7 +14,7 @@
 // morava em `text[]` dentro da própria linha, sem FK e sem regra de dono.
 // ============================================================================
 
-import { IDS, seedScenario, createOccurrence, SAMPLE_PHOTO } from '../fixtures.mjs';
+import { IDS, seedScenario, createOccurrence, SAMPLE_STORAGE_PATH } from '../fixtures.mjs';
 
 /** Caminho no Storage, na convenção do desenho: sifau/{fiscal}/{ano}/{mes}/{id}.jpg */
 const caminho = (fiscalId, nome) => `sifau/${fiscalId}/2026/10/${nome}`;
@@ -259,7 +259,7 @@ export default {
                    'Vistoria concluída, com registro fotográfico da correção.',
                    'Notificação', ARRAY[$3])
            RETURNING id`,
-          [ocorrenciaC, IDS.active, SAMPLE_PHOTO],
+          [ocorrenciaC, IDS.active, SAMPLE_STORAGE_PATH],
         ));
       vistoriaId = vistoria.rows[0].id;
 

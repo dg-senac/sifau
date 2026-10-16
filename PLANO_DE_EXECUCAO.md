@@ -98,11 +98,17 @@ Aqui é onde os dois bugs de SQL morrem **por construção**, em vez de remendo.
 
 ## FASE D — Fotos no Storage (o bug mais caro)
 
-### ⬜ Passo 10 — Bucket, políticas e caminho no app
-- **O que muda:** bucket privado no Supabase Storage + políticas por fiscal/ocorrência; `PhotoUpload` passa a subir arquivo e guardar o *path*; telas de detalhe resolvem via URL assinada.
-- **Resolve:** B3 inteiro — o banco para de inchar (500 MB davam para ~110 ocorrências; passam a dar para dezenas de milhares) e some o risco de estourar a cota do `localStorage` no modo offline.
-- **Verificação:** harness + teste manual do fluxo de anexo, inclusive **offline**.
-- **Risco:** 🟠 médio-alto — é o passo que mais mexe no app. Por isso o passo 5 já terá aliviado o problema antes, e podemos ir com calma.
+### ✅ Passo 10 — Fotos no Storage (parte 1: as fotos de campo)
+- **O que muda:** bucket privado `sifau-anexos` + 4 políticas em `storage.objects` (cada fiscal na própria pasta, administrador auditando); `ocorrencias.fotos` e `vistorias.fotos_depois` passam a guardar o **caminho**; o app sobe o arquivo antes de gravar a linha, online e offline.
+- **Resolve:** o B3 nas duas colunas que somavam 99,7% do peso.
+- **Verificação:** 12 testes novos no harness (bucket privado, pasta por fiscal, anônimo barrado, gatilho anti-base64), todos testados **ao contrário** — quebrando a política de INSERT, a de SELECT e o gatilho, os testes certos falham.
+- **Risco:** 🟠 médio-alto — é o passo que mais mexe no app.
+- **Resultado:** medido em PostgreSQL real, o ciclo de fiscalização (ocorrência com 5 fotos + vistoria com 3) caiu de **7.830 KB para 9 KB** no banco — **874x menos**. O plano gratuito sai de ~63 ciclos para ~57.000; o limite passa a ser o Storage (1 GB ≈ 4.000 fotos), que é o lugar certo para ele.
+- **Duas decisões de desenho que vale você saber:**
+  1. **As colunas não foram removidas — elas guardam caminho agora.** O desenho do passo 7 dizia que `fotos` e `fotos_depois` "viram anexos". Fazendo literalmente, o RPC `complete_inspection` e o CHECK que exige 1 foto na vistoria teriam de mudar **ao mesmo tempo** que o app — no passo que mais mexe no app. Preferi manter a forma da coluna e trocar só o conteúdo: o contrato do RPC fica intacto, a garantia "vistoria tem foto" continua no banco, e o ganho é o mesmo, porque o peso estava no conteúdo. A tabela `anexos` descreve cada arquivo (tipo, momento, tamanho, dimensões).
+  2. **Um gatilho recusa base64 nessas colunas.** Trocar conteúdo por caminho é o tipo de mudança que volta sem avisar: bastaria uma tela nova chamar o upload antigo e o banco voltaria a inchar em silêncio. Agora o banco recusa (`reject_inline_base64`), e há teste.
+- **O que fica para a parte 2 deste passo:** a biblioteca de documentos (`documentos.arquivo_data`), os anexos do chat do painel (`admin_messages.attachments`) e a assinatura do autuado (`autos_infracao.assinatura_autuado`) continuam em base64. São os três pontos que ainda usam arquivo dentro do banco — e a galeria é a única tela que realmente exibe arquivo, então ela merece cuidado próprio.
+- **Nota de honestidade sobre a fila offline:** o arquivo pendente ainda viaja em base64 dentro do `localStorage`. Fotografias ficaram ~3x menores (250 KB), mas 5 fotos pendentes ainda são ~1,7 MB — cabem, e o app avisa se a cota estourar. Guardar o arquivo em IndexedDB seria o certo para volumes maiores; não farei isso agora porque muda o mecanismo de fila inteiro, e o ganho imediato não paga o risco.
 
 **✅ Fim da Fase D:** o app e o banco estão, para todos os efeitos, prontos para uso real.
 

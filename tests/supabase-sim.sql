@@ -61,3 +61,41 @@ $$;
 GRANT USAGE ON SCHEMA auth TO anon, authenticated, service_role;
 GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
 GRANT USAGE ON SCHEMA storage TO anon, authenticated, service_role;
+
+-- ----------------------------------------------------------------------------
+-- Tabelas do Storage
+-- ----------------------------------------------------------------------------
+-- No Supabase elas existem antes de qualquer migration e são gerenciadas pelo
+-- serviço de Storage. Aqui a gente reproduz o suficiente para poder TESTAR as
+-- políticas de bucket: sem isso, a única forma de validar o acesso aos
+-- arquivos seria em produção, com foto real de fiscal.
+CREATE TABLE IF NOT EXISTS storage.buckets (
+  id text PRIMARY KEY,
+  name text NOT NULL,
+  public boolean NOT NULL DEFAULT false,
+  file_size_limit bigint,
+  allowed_mime_types text[],
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS storage.objects (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  bucket_id text REFERENCES storage.buckets(id),
+  name text,
+  owner uuid,
+  metadata jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;
+
+-- Mesma função do Supabase: as pastas do caminho, sem o nome do arquivo.
+-- `storage.foldername('a/b/foto.jpg')` → `{a,b}`.
+CREATE OR REPLACE FUNCTION storage.foldername(name text) RETURNS text[]
+LANGUAGE sql IMMUTABLE AS $$
+  SELECT (string_to_array(name, '/'))[1:array_length(string_to_array(name, '/'), 1) - 1]
+$$;
+
+GRANT SELECT ON storage.buckets TO anon, authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON storage.objects TO anon, authenticated;

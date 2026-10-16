@@ -1,21 +1,23 @@
 // ============================================================================
 // SIFAU — Listas de colunas para consultas de leitura
 // ============================================================================
-// As tabelas operacionais guardam anexos em base64 dentro de colunas de texto
-// (`ocorrencias.fotos`, `vistorias.fotos_depois`, `autos_infracao.assinatura_autuado`).
-// Em base64, cada foto cresce cerca de 33%, e uma ocorrência com as 5 fotos
-// permitidas chega perto de 4,6 MB.
+// Estas constantes nasceram quando as fotos eram base64 DENTRO da linha do
+// banco: um `select('*')` numa lista arrastava megabytes de imagem para exibir
+// texto, e as telas de início, mapa, painel e ordens faziam exatamente isso.
 //
-// Um `select('*')` nessas tabelas arrasta os anexos mesmo quando a tela só quer
-// mostrar uma lista. Era o caso das telas de início, mapa, painel, vistoria e
-// ordens — que juntas baixavam centenas de megabytes para exibir texto.
+// Depois do passo 10 o arquivo saiu do banco: `ocorrencias.fotos` e
+// `vistorias.fotos_depois` passaram a guardar o CAMINHO no Storage, e a
+// descrição de cada arquivo vive em `public.anexos`. Um `select('*')` deixou de
+// ser caro nessas colunas.
 //
-// Estas constantes existem para que a lista de colunas fique num só lugar.
-// Ao acrescentar um campo novo, atualize a constante; ao criar uma tela que
-// precise do anexo, peça a coluna de propósito.
+// O padrão continua valendo por outro motivo, que não é peso:
 //
-// Regra prática: anexo só é lido pela galeria de documentos, que é a única tela
-// que realmente os exibe.
+//   * a tela deve pedir o que ela usa. Um `select('*')` faz a tela ficar
+//     dependente de coluna que ela não conhece, e a próxima coluna pesada que
+//     alguém acrescentar cai nela sem aviso;
+//   * e as colunas de anexo continuam sendo a fronteira onde o base64 pode
+//     voltar sem ninguém perceber — existe gatilho no banco recusando, e estas
+//     constantes mantêm a leitura dessas colunas explícita.
 //
 // IMPORTANTE: cada valor precisa continuar sendo um **literal** de texto (uma
 // única string, sem `.join()` nem concatenação). O supabase-js deriva o tipo de
@@ -26,9 +28,9 @@
 /**
  * Colunas de `ocorrencias`, exceto `fotos`.
  *
- * `fotos` é gravada por `NewOccurrence` e **nunca é exibida em nenhuma tela** —
- * nem na lista, nem no detalhe. Manter a coluna fora das leituras evita baixar
- * megabytes de base64 sem uso.
+ * `fotos` guarda caminhos no Storage desde o passo 10 e **nunca é exibida em
+ * nenhuma tela** — nem na lista, nem no detalhe. Quem quiser exibir a evidência
+ * de uma ocorrência deve ler `public.anexos`, que tem tipo, momento e dimensões.
  */
 export const OCCURRENCE_COLUMNS =
   'id, fiscal_registrou, fiscal_designado, categoria, subcategoria, descricao, status, urgencia, latitude, longitude, bairro, endereco, sla_deadline, duplicata_de, created_at' as const;
@@ -36,9 +38,10 @@ export const OCCURRENCE_COLUMNS =
 /**
  * Colunas de `vistorias`, exceto `fotos_depois`.
  *
- * `fotos_depois` é gravada pela vistoria (mínimo de 1 foto, exigido por CHECK
- * no banco) e **também nunca é exibida**: as telas de detalhe e de ordens
- * mostram apenas data, ação, laudo e multa.
+ * `fotos_depois` guarda caminhos no Storage desde o passo 10 — mínimo de 1 foto,
+ * exigido pelo RPC `complete_inspection` e pelo CHECK da coluna — e **também
+ * nunca é exibida**: as telas de detalhe e de ordens mostram apenas data, ação,
+ * laudo e multa.
  */
 export const INSPECTION_COLUMNS =
   'id, ocorrencia_id, fiscal_id, chegada_at, chegada_latitude, chegada_longitude, laudo, acao_tomada, valor_multa, numero_processo, created_at' as const;
@@ -46,8 +49,9 @@ export const INSPECTION_COLUMNS =
 /**
  * Colunas de `autos_infracao`, exceto `assinatura_autuado`.
  *
- * A assinatura do autuado é gravada como PNG em base64 e não é exibida na
- * listagem de autos — apenas o tipo de infração, o valor, o autuado e a ciência.
+ * A assinatura do autuado ainda é gravada como PNG em base64: é o último ponto
+ * do app que não migrou para o Storage. Não é exibida na listagem de autos —
+ * apenas o tipo de infração, o valor, o autuado e a ciência.
  */
 export const FINE_COLUMNS =
   'id, os_id, ocorrencia_id, tipo_infracao, artigo_legal, valor_base, valor_multa, motivo, autuado_nome, autuado_documento, ciencia, testemunha_nome, pagamento, vencimento, created_at' as const;

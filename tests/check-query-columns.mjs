@@ -2,13 +2,15 @@
 // ============================================================================
 // SIFAU — Guarda contra `select('*')` em tabelas com anexo
 // ============================================================================
-// As tabelas abaixo guardam arquivos em base64 e por isso podem ficar enormes.
-// Pedir `*` nelas arrasta os anexos para dentro da tela, mesmo quando ela só
-// mostra texto. Foi assim que a tela de início passou a baixar potencialmente
-// centenas de megabytes por abertura.
+// As tabelas abaixo guardam (ou guardaram) arquivo: quatro delas em base64
+// dentro da linha, e `ocorrencias`/`vistorias` agora só com o caminho no
+// Storage. Pedir `*` nelas arrasta o anexo para dentro da tela mesmo quando ela
+// só mostra texto — foi assim que a tela de início passou a baixar centenas de
+// megabytes por abertura, quando as fotos eram base64.
 //
-// Este script falha se alguém voltar a usar `select('*')` nessas tabelas, ou se
-// as listas de colunas de `src/lib/columns.ts` passarem a incluir o anexo.
+// O motivo mudou depois do passo 10 (hoje `ocorrencias.fotos` é caminho, e
+// caminho é barato), mas a regra fica: ela mantém explícito o que cada tela lê
+// e deixa na fronteira as colunas por onde o base64 pode voltar.
 //
 //   node tests/check-query-columns.mjs
 // ============================================================================

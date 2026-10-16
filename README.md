@@ -70,16 +70,37 @@ proprietário (o administrador enxerga para auditoria), e a migration
 `20261012100000_harden_documents.sql` restringe os registros e remove a falsa
 validação de certificado.
 
-> **Limites importantes.** Os arquivos são gravados em base64 nas colunas do banco, e
-> a interface limita cada upload a 5 MB. Isso é adequado a volumes pequenos: para uso
-> em produção contínua, migre os arquivos para o Supabase Storage com políticas de
-> bucket antes de ampliar qualquer limite — em base64, cada foto cresce cerca de 33%
-> e entra em toda consulta que use `select('*')`.
+> **Limites importantes.** Os arquivos são gravados em `base64` nas colunas do banco, e
+> a interface limita cada upload a 5 MB. A biblioteca de documentos é o último ponto do
+> app nesse modelo: as **fotos de campo** já saem do banco (veja abaixo). Em base64,
+> cada arquivo cresce cerca de 33% e entra em toda consulta que use `select('*')`.
 >
 > Assinatura manuscrita é apenas uma **imagem** colhida na tela. Não é validação
 > criptográfica, não é certificado digital e **não constitui assinatura digital
 > qualificada** nos termos da ICP-Brasil. Não use esse recurso como prova de
 > autoria sem respaldo jurídico próprio.
+
+### Fotos de campo no Storage
+
+As fotos de ocorrência e de vistoria **não ficam no banco**. Elas vão para o
+bucket privado `sifau-anexos` e a linha guarda só o caminho
+(`{fiscal_id}/{ano}/{mes}/{anexo_id}.jpg`); a descrição de cada arquivo — tipo,
+momento, tamanho, dimensões — fica em `public.anexos`.
+
+Medido em PostgreSQL real, um ciclo de fiscalização (ocorrência com 5 fotos e
+vistoria com 3) ocupava **7.830 KB** de banco. Com o arquivo no Storage, o ciclo
+ocupa **9 KB** — o banco deixa de ser o limite: o plano gratuito sai de ~63
+ciclos para dezenas de milhares. O limite passa a ser o Storage (1 GB no plano
+gratuito, cerca de 4.000 fotos a 250 KB).
+
+Como o conteúdo saiu da linha, existe um gatilho no banco que **recusa** qualquer
+valor começando com `data:` nas colunas de foto: voltar ao base64 não é uma
+decisão que passe despercebida.
+
+> Para os arquivos serem enviados, o projeto Supabase precisa do bucket e das
+> políticas de `storage.objects` — eles estão no `SETUP_COMPLETO.sql` e na
+> migration `20261015000000_photos_to_storage.sql`. Sem isso o app funciona e a
+> ocorrência entra na fila, mas a foto não sobe.
 
 ## Segurança e operação
 

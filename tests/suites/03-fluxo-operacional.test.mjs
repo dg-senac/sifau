@@ -9,7 +9,7 @@
 // quebrar o fluxo de fiscalização, é aqui que aparece.
 // ============================================================================
 
-import { IDS, seedScenario, occurrencePayload, createOccurrence, SAMPLE_PHOTO } from '../fixtures.mjs';
+import { IDS, seedScenario, occurrencePayload, createOccurrence, SAMPLE_STORAGE_PATH } from '../fixtures.mjs';
 
 export default {
   name: 'fluxo operacional',
@@ -97,7 +97,7 @@ export default {
              p_acao_tomada := 'Notificação', p_valor_multa := NULL, p_numero_processo := NULL,
              p_fotos_depois := ARRAY[$4], p_status := 'Resolvida',
              p_note := 'Vistoria realizada. Ação: Notificação.')`,
-          [vistoriaId, occurrenceId, IDS.active, SAMPLE_PHOTO],
+          [vistoriaId, occurrenceId, IDS.active, SAMPLE_STORAGE_PATH],
         );
       });
 
@@ -138,7 +138,7 @@ export default {
                p_laudo := 'Tentativa de concluir vistoria de ocorrência alheia.',
                p_acao_tomada := 'Notificação', p_valor_multa := NULL, p_numero_processo := NULL,
                p_fotos_depois := ARRAY[$3], p_status := 'Resolvida', p_note := NULL)`,
-            [outra, IDS.other, SAMPLE_PHOTO],
+            [outra, IDS.other, SAMPLE_STORAGE_PATH],
           ),
           'conclusão de vistoria de ocorrência alheia',
         );
@@ -160,7 +160,7 @@ export default {
                p_laudo := 'Multa aplicada sem os dados obrigatórios do processo.',
                p_acao_tomada := 'Multa', p_valor_multa := NULL, p_numero_processo := NULL,
                p_fotos_depois := ARRAY[$3], p_status := 'Resolvida', p_note := NULL)`,
-            [alvo, IDS.active, SAMPLE_PHOTO],
+            [alvo, IDS.active, SAMPLE_STORAGE_PATH],
           ),
           'multa sem valor e processo',
         );

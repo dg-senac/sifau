@@ -8,6 +8,7 @@ import { classifyByText } from '@/lib/classify';
 import { PageTitle } from '@/components/ui';
 import { PhotoUpload } from '@/components/PhotoUpload';
 import { createQueueId, enqueue, isRecoverableSyncError } from '@/lib/offlineQueue';
+import { enviarFotos, gravarAnexos, prepararFotos, type FotoPreparada } from '@/lib/anexos';
 
 export function NewOccurrence({
   fiscal,
@@ -109,8 +110,27 @@ export function NewOccurrence({
     setSaving(true);
     setMessage('');
 
+    // O id do registro é gerado aqui, e não pelo banco: é ele que amarra as
+    // fotos ao registro antes de qualquer coisa subir (inclusive offline).
+    const occurrenceId = createQueueId();
+    let fotosPreparadas: FotoPreparada[];
+    try {
+      fotosPreparadas = await prepararFotos({
+        fiscalId: fiscal.id,
+        fotos: photos,
+        tipo: 'foto',
+        momento: 'antes',
+        vinculo: { ocorrencia_id: occurrenceId },
+      });
+    } catch (error) {
+      console.error('Erro ao preparar as fotos:', error);
+      setMessage('Não foi possível preparar as fotos. Remova as imagens e tente novamente.');
+      setSaving(false);
+      return;
+    }
+
     const basePayload = {
-      id: createQueueId(),
+      id: occurrenceId,
       fiscal_registrou: fiscal.id,
       categoria: form.categoria,
       subcategoria: form.subcategoria,
@@ -120,13 +140,22 @@ export function NewOccurrence({
       urgencia: form.urgencia,
       latitude: location.lat,
       longitude: location.lng,
-      fotos: photos,
+      // Caminhos no bucket, nunca o arquivo: era isto que fazia o banco encher.
+      fotos: fotosPreparadas.map((foto) => foto.path),
     };
+
+    const queue = (deadline: string) =>
+      enqueue(
+        'ocorrencias',
+        { ...basePayload, sla_deadline: deadline },
+        `Ocorrência: ${form.categoria}`,
+        fotosPreparadas,
+      );
 
     if (offline || !navigator.onLine) {
       const deadline = new Date(Date.now() + 72 * 3600000).toISOString();
       try {
-        enqueue('ocorrencias', { ...basePayload, sla_deadline: deadline }, `Ocorrência: ${form.categoria}`);
+        queue(deadline);
       } catch (error) {
         console.error('Não foi possível guardar a ocorrência neste aparelho:', error);
         setMessage('Não foi possível salvar offline. Libere espaço no aparelho e tente novamente.');
@@ -141,6 +170,27 @@ export function NewOccurrence({
     const { data: sla } = await supabase.from('sla_config').select('prazo_horas').eq('categoria', form.categoria).maybeSingle();
     const deadline = new Date(Date.now() + (sla?.prazo_horas ?? 72) * 3600000).toISOString();
 
+    // As fotos sobem primeiro: o registro grava caminhos, e caminho sem arquivo
+    // é pior que arquivo sem registro. Se o envio falhar por qualquer motivo, a
+    // ocorrência inteira vai para a fila — o fiscal não perde o que registrou.
+    try {
+      await enviarFotos(fotosPreparadas);
+    } catch (uploadError) {
+      console.error('Erro ao enviar as fotos da ocorrência:', uploadError);
+      try {
+        queue(deadline);
+      } catch (queueError) {
+        console.error('Não foi possível guardar a ocorrência neste aparelho:', queueError);
+        setMessage('Não foi possível salvar offline. Libere espaço no aparelho e tente novamente.');
+        setSaving(false);
+        return;
+      }
+      setMessage('Não foi possível enviar as fotos agora: a ocorrência ficou na fila e será enviada automaticamente.');
+      setSaving(false);
+      setTimeout(onDone, 1400);
+      return;
+    }
+
     const { error } = await supabase.from('ocorrencias').insert({ ...basePayload, sla_deadline: deadline });
 
     if (error) {
@@ -153,7 +203,7 @@ export function NewOccurrence({
       // O mesmo ID torna seguro repetir um insert que possa ter sido confirmado
       // pelo servidor, mas cuja resposta tenha se perdido na rede.
       try {
-        enqueue('ocorrencias', { ...basePayload, sla_deadline: deadline }, `Ocorrência: ${form.categoria}`);
+        queue(deadline);
       } catch (queueError) {
         console.error('Não foi possível guardar a ocorrência neste aparelho:', queueError);
         setMessage('Não foi possível salvar offline. Libere espaço no aparelho e tente novamente.');
@@ -165,6 +215,9 @@ export function NewOccurrence({
       setTimeout(onDone, 1400);
       return;
     }
+
+    // Com o registro gravado, as fotos ganham descrição em `anexos`.
+    await gravarAnexos(fotosPreparadas);
     onDone();
     setSaving(false);
   };

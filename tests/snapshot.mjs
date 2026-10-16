@@ -29,11 +29,21 @@ export const CONSULTAS = {
             FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
             WHERE n.nspname = 'public' ORDER BY 1`,
 
-  // Expressão da política, não só o nome.
-  politicas: `SELECT tablename || ':' || policyname || ' [' || cmd || ']' ||
+  // Expressão da política, não só o nome. Inclui o schema `storage`: uma
+  // política de bucket divergente entre os dois caminhos de instalação deixaria
+  // fotos inacessíveis (ou acessíveis demais) sem nenhum outro sinal.
+  politicas: `SELECT schemaname || '.' || tablename || ':' || policyname ||
+                    ' [' || cmd || ']' ||
                     ' using=' || COALESCE(qual, '-') ||
                     ' check=' || COALESCE(with_check, '-') AS v
-              FROM pg_policies WHERE schemaname = 'public' ORDER BY 1`,
+              FROM pg_policies WHERE schemaname IN ('public', 'storage') ORDER BY 1`,
+
+  // O bucket em si: privado, limite e tipos aceitos. Um bucket público criado
+  // por engano num dos caminhos não apareceria em nenhuma outra comparação.
+  buckets: `SELECT id || ' public=' || public ||
+                   ' limite=' || COALESCE(file_size_limit::text, '-') ||
+                   ' tipos=' || COALESCE(array_to_string(allowed_mime_types, ','), '-') AS v
+            FROM storage.buckets ORDER BY 1`,
 
   colunas: `SELECT table_name || '.' || column_name || ' ' || data_type ||
                    ' null=' || is_nullable ||
