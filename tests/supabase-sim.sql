@@ -6,7 +6,10 @@
 -- mínimo que o Supabase fornece de fábrica:
 --
 --   * schema `auth` com `auth.users`, `auth.uid()`, `auth.role()` e `auth.jwt()`
---   * schema `storage` (usado por políticas de arquivo, quando existirem)
+--   * schema `storage` com `buckets`, `objects`, as 4 operações de RLS e
+--     `storage.foldername()` — o schema do SIFAU depende disso desde os anexos:
+--     há gatilhos anti-base64, políticas por pasta do usuário e o bucket
+--     `sifau-anexos`. Sem o stub, metade das suítes não roda
 --   * as roles `anon`, `authenticated`, `service_role` e `supabase_auth_admin`
 --
 -- Sem isso, o schema do SIFAU não pode ser aplicado fora do Supabase, porque

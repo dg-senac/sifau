@@ -11,13 +11,27 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import {
+// O módulo sob teste é TypeScript e o Node remove os tipos ao importá-lo. Isso
+// exige o Node 22.6+ (ligado por padrão a partir do 22.18). Num Node mais antigo
+// o erro padrão é "Unknown file extension .ts", que não diz o que fazer — então
+// a mensagem abaixo diz.
+{
+  const [maior, menor] = process.versions.node.split('.').map(Number);
+  if (maior < 22 || (maior === 22 && menor < 18)) {
+    throw new Error(
+      `Estes testes precisam do Node 22.18 ou mais novo (atual: ${process.versions.node}). ` +
+        'Entre 22.6 e 22.17 funcionam com --experimental-strip-types.',
+    );
+  }
+}
+
+const {
   TAMANHO_MINIMO_DA_SENHA,
   lerRecuperacaoDoEndereco,
   mensagemDoErroDeLink,
   urlSemCredenciais,
   validarNovaSenha,
-} from '../../src/lib/recuperacaoDeSenha.ts';
+} = await import('../../src/lib/recuperacaoDeSenha.ts');
 
 test('endereço comum não é confundido com recuperação', () => {
   assert.deepEqual(lerRecuperacaoDoEndereco({}), { situacao: 'nenhuma' });
