@@ -37,11 +37,14 @@ export default {
       t.count(visible, 1, 'fiscais visíveis ao pendente (apenas o próprio)');
     });
 
-    await t.knownBug('fiscal pendente não lê a trilha de auditoria', async () => {
+    await t.test('fiscal pendente não lê a trilha de auditoria', async () => {
+      // Defeito B1 (corrigido): a política legada `fiscal_select_auditoria`
+      // usava `USING (true)` e, por ser permissiva, anulava a política
+      // restritiva — a trilha ficava legível para qualquer conta autenticada.
       const visible = await db.as(IDS.pending, 'authenticated', async () =>
         Number((await db.query(`SELECT count(*) AS n FROM public.auditoria`)).rows[0].n));
       t.count(visible, 0, 'registros de auditoria visíveis ao pendente');
-    }, 'B1: política legada fiscal_select_auditoria USING (true)');
+    });
 
     await t.test('fiscal pendente não insere registro na auditoria', async () => {
       await db.as(IDS.pending, 'authenticated', async () => {
@@ -119,16 +122,27 @@ export default {
       t.eq(rows.map((r) => r.tabela), [], 'tabelas sem RLS');
     });
 
-    await t.knownBug('nenhuma tabela expõe SELECT incondicional ao usuário autenticado', async () => {
-      // Uma política `USING (true)` é permissiva e se soma (OR) às demais,
-      // anulando qualquer restrição mais específica na mesma tabela.
+    await t.test('nenhuma tabela expõe SELECT incondicional ao usuário autenticado', async () => {
+      // Defeito B1 (corrigido), causa raiz: uma política `USING (true)` é
+      // permissiva e se soma (OR) às demais, anulando qualquer restrição mais
+      // específica na mesma tabela. Este teste impede a reintrodução.
       const { rows } = await db.owner(`
         SELECT tablename || '.' || policyname AS politica
         FROM pg_policies
         WHERE schemaname = 'public' AND cmd = 'SELECT' AND qual = 'true'
         ORDER BY 1`);
       t.eq(rows.map((r) => r.politica), [], 'políticas de SELECT incondicionais');
-    }, 'B1: mesma causa raiz — política permissiva anulando as restritivas');
+    });
+
+    await t.test('nenhuma tabela expõe escrita incondicional', async () => {
+      const { rows } = await db.owner(`
+        SELECT tablename || '.' || policyname || ' [' || cmd || ']' AS politica
+        FROM pg_policies
+        WHERE schemaname = 'public'
+          AND (qual = 'true' OR with_check = 'true')
+        ORDER BY 1`);
+      t.eq(rows.map((r) => r.politica), [], 'políticas incondicionais de escrita');
+    });
 
     await t.test('fiscal só enxerga as próprias notificações', async () => {
       // Atribui a ocorrência ao fiscal ativo, gerando notificação para ele.

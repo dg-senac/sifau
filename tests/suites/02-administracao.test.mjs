@@ -54,15 +54,18 @@ export default {
       });
     });
 
-    await t.knownBug('bootstrap_admin ativa o perfil fiscal do administrador', async () => {
-      // Sem isso, o administrador fica com is_active_fiscal() = false, o que
-      // quebra toda operação que dependa dessa função — inclusive a criação
-      // de ocorrências pela política occurrences_insert_self.
+    await t.test('bootstrap_admin ativa o perfil fiscal do administrador', async () => {
+      // Defeito B2 (corrigido): sem a ativação, o administrador fica com
+      // is_active_fiscal() = false, o que quebra toda operação que dependa
+      // dessa função — inclusive a criação de ocorrências.
       const { rows } = await db.owner(`SELECT ativo FROM public.fiscais WHERE id = $1`, [IDS.admin]);
       t.eq(rows[0].ativo, true, 'perfil fiscal do administrador');
-    }, 'B2: bootstrap_admin não ativa public.fiscais');
+    });
 
-    await t.knownBug('administrador consegue registrar uma ocorrência', async () => {
+    await t.test('administrador consegue registrar uma ocorrência', async () => {
+      // Consequência direta do B2: a política occurrences_insert_self exige
+      // is_active_fiscal(). Antes da correção, o banco recusava o insert do
+      // administrador com "new row violates row-level security policy".
       await db.as(IDS.admin, 'authenticated', async () => {
         await db.query(
           `INSERT INTO public.ocorrencias
@@ -73,7 +76,7 @@ export default {
           [IDS.admin],
         );
       });
-    }, 'B2: consequência direta do perfil fiscal inativo');
+    });
 
     await t.test('administrador aprova um fiscal pelo RPC do painel', async () => {
       await db.as(IDS.admin, 'authenticated', async () => {
@@ -107,8 +110,6 @@ export default {
     });
 
     await t.test('administrador distribui uma ocorrência sem responsável', async () => {
-      // A ocorrência é criada por um fiscal ativo — o administrador esbarra no
-      // defeito B2, coberto pelos testes `knownBug` acima.
       const occurrenceId = await createOccurrence(db, IDS.active);
       const before = await db.owner(`SELECT fiscal_designado FROM public.ocorrencias WHERE id = $1`, [occurrenceId]);
       t.eq(before.rows[0].fiscal_designado, null, 'responsável antes da distribuição');

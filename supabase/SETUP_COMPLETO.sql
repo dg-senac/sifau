@@ -4,6 +4,26 @@
 -- Para um banco já existente, aplique as migrations pela Supabase CLI em ordem.
 -- Requer os serviços padrão Supabase Auth e as roles anon/authenticated.
 -- ============================================================================
+-- Este arquivo é CURADO, não uma cópia literal do histórico de migrations.
+--
+-- Ele representa o ESTADO FINAL desejado do schema. Cada bloco traz a migration
+-- de origem no cabeçalho, mas dois ajustes são aplicados aqui e não no arquivo
+-- histórico, porque migrations já aplicadas não devem ser editadas:
+--
+--   1. Políticas permissivas (`USING (true)`) não são criadas. Elas existiam
+--      nas migrations antigas e uma delas sobrevivia ao hardening, deixando a
+--      trilha de auditoria legível para qualquer conta autenticada.
+--   2. `bootstrap_admin` ativa o perfil fiscal do administrador. Sem isso, o
+--      administrador ficava com `is_active_fiscal() = false` e não conseguia
+--      operar.
+--
+-- Para bancos já existentes, os mesmos ajustes são aplicados pela migration
+-- `20261013000000_fix_permissive_policies_and_admin_bootstrap.sql`.
+--
+-- O script `npm run test:sql:parity` confere que os dois caminhos de instalação
+-- (este arquivo e as migrations em ordem) produzem o mesmo schema final. Se os
+-- dois divergirem, a verificação falha.
+-- ============================================================================
 -- Após executar este arquivo:
 -- 1. Crie o primeiro usuário em Authentication > Users (ou pela tela de cadastro).
 -- 2. No SQL Editor, promova esse usuário como administrador:
@@ -186,21 +206,27 @@ ALTER TABLE public.reincidencias ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.auditoria ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.exportacoes_auditoria ENABLE ROW LEVEL SECURITY;
 
-DO $$ DECLARE t text; BEGIN FOR t IN SELECT unnest(ARRAY['fiscais','sla_config','ocorrencias','vistorias','ordens_servico','autos_infracao','reincidencias','exportacoes_auditoria']) LOOP
-  EXECUTE format('DROP POLICY IF EXISTS "fiscal_select_%s" ON public.%I', t, t);
-  EXECUTE format('DROP POLICY IF EXISTS "fiscal_insert_%s" ON public.%I', t, t);
-  EXECUTE format('DROP POLICY IF EXISTS "fiscal_update_%s" ON public.%I', t, t);
-  EXECUTE format('DROP POLICY IF EXISTS "fiscal_delete_%s" ON public.%I', t, t);
-  EXECUTE format('CREATE POLICY "fiscal_select_%s" ON public.%I FOR SELECT TO authenticated USING (true)', t, t);
-  EXECUTE format('CREATE POLICY "fiscal_insert_%s" ON public.%I FOR INSERT TO authenticated WITH CHECK (true)', t, t);
-  EXECUTE format('CREATE POLICY "fiscal_update_%s" ON public.%I FOR UPDATE TO authenticated USING (true) WITH CHECK (true)', t, t);
-  EXECUTE format('CREATE POLICY "fiscal_delete_%s" ON public.%I FOR DELETE TO authenticated USING (true)', t, t);
-END LOOP; END $$;
-
-DROP POLICY IF EXISTS "fiscal_select_auditoria" ON public.auditoria;
-DROP POLICY IF EXISTS "fiscal_insert_auditoria" ON public.auditoria;
-CREATE POLICY "fiscal_select_auditoria" ON public.auditoria FOR SELECT TO authenticated USING (true);
-CREATE POLICY "fiscal_insert_auditoria" ON public.auditoria FOR INSERT TO authenticated WITH CHECK (true);
+-- As políticas permissivas desta etapa foram REMOVIDAS na consolidação.
+--
+-- A versão anterior deste arquivo criava, aqui, políticas
+-- `FOR SELECT ... USING (true)` (e equivalentes de INSERT/UPDATE/DELETE) para
+-- as tabelas operacionais e para `auditoria`. A migration de hardening apagava
+-- uma lista branca dessas políticas — mas a lista não incluía
+-- `fiscal_select_auditoria` nem `fiscal_insert_auditoria`.
+--
+-- Como políticas permissivas são combinadas com OR, a política `USING (true)`
+-- anulava a política restritiva criada depois, e a trilha de auditoria ficava
+-- legível por qualquer conta autenticada — inclusive um fiscal recém-cadastrado
+-- e nunca aprovado. Ver a suíte `tests/suites/01-acesso.test.mjs`.
+--
+-- Uma instalação nova não deve criar a política para depois apagá-la: o acesso
+-- é definido apenas pelas políticas restritivas declaradas no bloco final.
+-- Manter aqui qualquer `USING (true)` reintroduz o defeito.
+--
+-- As políticas de INSERT em `auditoria` também não são necessárias: a trilha é
+-- escrita somente pelo trigger `audit_occurrence_change`, que é SECURITY DEFINER
+-- e roda como o dono da tabela, sem passar pelo RLS. O aplicativo nunca insere
+-- em `auditoria` diretamente.
 
 CREATE INDEX IF NOT EXISTS ocorrencias_status_idx ON public.ocorrencias(status);
 CREATE INDEX IF NOT EXISTS ocorrencias_bairro_idx ON public.ocorrencias(bairro);
@@ -1037,6 +1063,17 @@ BEGIN
   INSERT INTO public.administradores (id, email, nome)
   VALUES (admin_user_id, admin_email, admin_name)
   ON CONFLICT (id) DO UPDATE SET email = EXCLUDED.email, nome = EXCLUDED.nome;
+
+  -- O trigger de cadastro cria todo perfil fiscal como inativo, porque um fiscal
+  -- comum precisa de aprovação. O administrador é a exceção: sem esta ativação,
+  -- ele fica com is_active_fiscal() = false, e toda operação que depende dessa
+  -- função falha para ele — inclusive registrar uma ocorrência, porque a
+  -- política occurrences_insert_self exige is_active_fiscal().
+  --
+  -- Isso não abre privilégio: o perfil já existe e a conta já é administradora.
+  -- A ativação apenas mantém as duas verificações coerentes entre si.
+  UPDATE public.fiscais SET ativo = true WHERE id = admin_user_id;
+
   RETURN admin_user_id;
 END;
 $$;
@@ -1504,6 +1541,37 @@ BEGIN
   END LOOP;
 END $$;
 
+
+-- Segunda varredura, agora por ESTADO e não por nome.
+--
+-- A varredura acima depende de acertar o nome de cada política — foi assim que
+-- o defeito da trilha de auditoria passou: `fiscal_select_auditoria` e
+-- `fiscal_insert_auditoria` existiam no banco, mas não estavam em nenhuma
+-- lista. Como políticas permissivas se combinam com OR, uma `USING (true)`
+-- anula as restritivas da mesma tabela.
+--
+-- Esta varredura derruba qualquer política que ainda esteja incondicional,
+-- independentemente do nome, e é a mesma da migration
+-- 20261013000000_fix_permissive_policies_and_admin_bootstrap.sql. As suítes de
+-- teste exigem que o estado final tenha zero políticas incondicionais.
+DO $$
+DECLARE
+  policy_row record;
+BEGIN
+  FOR policy_row IN
+    SELECT tablename, policyname
+    FROM pg_catalog.pg_policies
+    WHERE schemaname = 'public'
+      AND (qual = 'true' OR with_check = 'true')
+  LOOP
+    EXECUTE pg_catalog.format(
+      'DROP POLICY IF EXISTS %I ON public.%I',
+      policy_row.policyname, policy_row.tablename
+    );
+    RAISE NOTICE 'Política permissiva removida: %.%',
+      policy_row.tablename, policy_row.policyname;
+  END LOOP;
+END $$;
 DROP POLICY IF EXISTS "Admin vê todos os admins" ON public.administradores;
 DROP POLICY IF EXISTS "Admin insere admins" ON public.administradores;
 DROP POLICY IF EXISTS "Admin vê todas as localizações" ON public.fiscal_location;

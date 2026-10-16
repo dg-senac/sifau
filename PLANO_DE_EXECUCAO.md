@@ -65,16 +65,21 @@ O objetivo desta fase é eliminar a ambiguidade "qual é o app?" e criar a rede 
 
 Aqui é onde os dois bugs de SQL morrem **por construção**, em vez de remendo. Só faz sentido porque você topou refazer.
 
-### ⏸️ Passo 7 — Decidir o modelo de anexos
+### ✅ Passo 7 — Decidir o modelo de anexos
 - **Decisão sua, com meu parecer ao lado:** hoje existem **4 lugares** guardando arquivo em base64 (`ocorrencias.fotos`, `vistorias.fotos_depois`, `documentos.arquivo_data`, `assinaturas_digitais`). Minha recomendação: **um único modelo de anexos**, com o arquivo no Supabase Storage e só o *path* no banco.
 - **Por que decidir antes de escrever o schema:** é a decisão que mais afeta o desenho das tabelas. Mudar depois é caro.
 - **Entrego:** um desenho das tabelas para você aprovar, sem SQL ainda.
 
-### ⬜ Passo 8 — Gerar o `SETUP_COMPLETO.sql` consolidado
+### ✅ Passo 8 — Gerar o `SETUP_COMPLETO.sql` consolidado
 - **O que muda:** um schema único, curado e legível — **sem nenhuma política `USING (true)`** (as permissivas nunca chegam a existir → B1 morre na origem); `bootstrap_admin` ativando o fiscal (B2 na origem); política de anexos do passo 7.
 - **Resolve:** as 1.716 linhas de arqueologia viram um script que dá para ler inteiro. Mata B1 e B2.
 - **Verificação:** harness do passo 2, **agora 100% verde**, incluindo os testes de negação de acesso.
 - **Risco:** 🟠 médio — é reescrita de schema. Por isso o harness vem antes e o script fica versionado ao lado do antigo para comparação.
+- **Resultado (feito):** B1 e B2 morreram, com **62 testes ✓ / 0 ✗** nos dois caminhos. Duas decisões de método:
+  1. **A migration antiga não foi editada** (já aplicada em banco real). A correção entrou num arquivo novo, `20261013000000_fix_permissive_policies_and_admin_bootstrap.sql`, e no `SETUP_COMPLETO.sql` curado. O `SETUP_COMPLETO.sql` é um arquivo curado, não cópia literal do histórico — o cabeçalho explica isso a quem for ler.
+  2. **A paridade entre os dois caminhos ficou muito mais forte.** Antes ela comparava nome de tabela, função, política e coluna. Agora compara **o corpo das funções** (ignorando comentário, porque um arquivo é comentado para quem lê o SQL Editor e o outro para quem lê histórico), **a expressão de cada política** (`USING`/`WITH CHECK`), **as restrições** (CHECK/UNIQUE/PK) e **os privilégios por coluna**. Passou de 4 para 6 dimensões e de ~250 para ~700 itens comparados.
+- **Por que isso importa:** a paridade fraca era o motivo de B1 e B2 terem nascido. A comparação de nome não distinguia "a política existe nos dois" de "a política *faz a mesma coisa* nos dois" — que era exatamente o defeito. Testei a nova paridade **ao contrário**: injetei uma permissividade em uma política e ela acusou o nome da política e a condição divergente; injetei um corpo de função sem a ativação do administrador e ela acusou; injetei uma coluna a mais e ela acusou.
+- **Achado do caminho:** havia 8 políticas permissivas `USING (true)` (em `fiscal_location`, `admin_messages`, `banned_users`, `administradores`) **criadas e derrubadas** por uma lista de nomes no meio do arquivo. O estado final estava correto — mas o mecanismo dependia de acertar cada nome, que foi exatamente como B1 escapou. Acrescentei ao `SETUP_COMPLETO.sql` a mesma varredura **por estado** (`qual = 'true' OR with_check = 'true'`, derruba independentemente do nome) que já tinha posto na migration. As suítes de acesso exigem zero políticas incondicionais no estado final dos dois caminhos.
 
 ### ⬜ Passo 9 — Aplicar no Supabase e migrar o que existir
 - **O que muda:** rodar o schema novo no projeto e, se houver dado que valha a pena, um script de migração pontual.
