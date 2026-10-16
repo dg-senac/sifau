@@ -17,8 +17,25 @@ impede que voltem.
 npm run test:sql              # testa supabase/SETUP_COMPLETO.sql (projeto novo)
 npm run test:sql:migrations   # testa supabase/migrations/*.sql em ordem (projeto existente)
 npm run test:unit             # funções puras do app (sem navegador, sem Supabase)
+npm run test:marca            # a marca em public/ é a que a fonte gera
+npm run test:assets           # nenhuma fonte ou ícone de terceiro no app
+npm run test:pwa              # manifest, service worker, casca e registro
 npm run verify                # tudo em sequência, com tipo, lint e build
 ```
+
+Dois testes ficam fora do `verify` porque dependem da construção ou mexem nos
+arquivos do projeto:
+
+```bash
+npm run test:pwa:dist         # o app CONSTRUÍDO: instalável, fontes próprias, versão certa
+npm run test:pwa:negativos    # injeta 12 defeitos de propósito e confere que são pegos
+```
+
+O `test:pwa:negativos` é o mais importante dos dois: ele existe para provar que
+a verificação de instalação não é enfeite. Um teste que nunca reprovou não
+protege nada — e ele já pegou duas fraquezas na própria verificação (uma se
+satisfazia com o texto de um comentário; outra, com metade do nome de uma
+constante).
 
 O mesmo `npm run verify` roda no CI (`.github/workflows/verify.yml`) em todo pull
 request e em todo push para `main`. Se você for mexer no SQL, rode antes de

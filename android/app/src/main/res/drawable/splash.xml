@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Gerado por `npm run marca:android`.
+     Duas camadas: o fundo preenche a tela e o escudo fica centrado, sempre no
+     tamanho certo — porque quem posiciona é o sistema, não o recorte da imagem. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@drawable/splash_fundo" />
+    <item>
+        <bitmap android:src="@drawable/splash_escudo" android:gravity="center" />
+    </item>
+</layer-list>

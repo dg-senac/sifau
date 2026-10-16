@@ -14,10 +14,11 @@
 // ============================================================================
 
 import { FormEvent, useState } from 'react';
-import { AlertTriangle, KeyRound, Loader2, MailCheck, ShieldCheck } from 'lucide-react';
+import { AlertTriangle, KeyRound, Loader2, MailCheck } from 'lucide-react';
 import {
   definirNovaSenha, getAuthErrorMessage, signOut, solicitarRecuperacaoDeSenha,
 } from '@/lib/authActions';
+import { SifauMarcaVertical } from '@/components/Logo';
 import { TAMANHO_MINIMO_DA_SENHA, validarNovaSenha } from '@/lib/recuperacaoDeSenha';
 
 type NovaSenhaScreenProps = {
@@ -94,11 +95,7 @@ export function NovaSenhaScreen({ problema, email, onConcluir }: NovaSenhaScreen
   return (
     <div className="auth-page">
       <div className="auth-brand">
-        <div className="brand-mark xl">
-          <ShieldCheck size={44} />
-        </div>
-        <h1>SIFAU</h1>
-        <p>Fiscalização urbana inteligente</p>
+        <SifauMarcaVertical largura={158} className="auth-marca" />
       </div>
 
       <div className="auth-card">

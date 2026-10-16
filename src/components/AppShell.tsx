@@ -9,13 +9,13 @@ import {
   Plus,
   FileCheck2,
   FileText,
-  ShieldCheck,
   UserCog,
   Users,
   X,
 } from 'lucide-react';
 import { signOut } from '@/lib/authActions';
 import { Fiscal, Screen } from '@/lib/types';
+import { SifauSimbolo } from '@/components/Logo';
 import { SyncBanner } from '@/components/SyncBanner';
 
 const MORE_GROUP: Screen[] = ['more', 'profile', 'notifications', 'messages', 'map', 'users', 'audit', 'documents'];
@@ -50,7 +50,7 @@ export function AppShell({
         </button>
         <div className="brand">
           <div className="brand-mark">
-            <ShieldCheck size={20} />
+            <SifauSimbolo tamanho={22} />
           </div>
           <div>
             <strong>SIFAU</strong>
@@ -89,7 +89,7 @@ export function AppShell({
           <aside className="drawer" onClick={(e) => e.stopPropagation()}>
             <div className="drawer-header">
               <div className="brand-mark large">
-                <ShieldCheck size={26} />
+                <SifauSimbolo tamanho={26} />
               </div>
               <div>
                 <strong>SIFAU</strong>

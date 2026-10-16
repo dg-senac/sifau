@@ -1,6 +1,7 @@
 import { FormEvent, useState } from 'react';
-import { AlertTriangle, Loader2, MailCheck, ShieldCheck } from 'lucide-react';
+import { AlertTriangle, Loader2, MailCheck } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
+import { SifauMarcaVertical } from '@/components/Logo';
 import { getAuthErrorMessage, logAuthError, solicitarRecuperacaoDeSenha, type ErroDeAuth } from '@/lib/authActions';
 import { TAMANHO_MINIMO_DA_SENHA } from '@/lib/recuperacaoDeSenha';
 
@@ -105,11 +106,7 @@ export function AuthScreen() {
   return (
     <div className="auth-page">
       <div className="auth-brand">
-        <div className="brand-mark xl">
-          <ShieldCheck size={44} />
-        </div>
-        <h1>SIFAU</h1>
-        <p>Fiscalização urbana inteligente</p>
+        <SifauMarcaVertical largura={158} className="auth-marca" />
       </div>
       <div className="auth-card">
         {mode !== 'recuperar' && (

@@ -121,6 +121,24 @@ base64 não é uma decisão que passe despercebida.
 > migrations `20261015000000` a `20261018000000`. Sem isso o app funciona e o
 > registro entra na fila, mas o arquivo não sobe.
 
+## Instalação e funcionamento sem conexão
+
+O aplicativo pode ser instalado pelo navegador (Android e iPhone) e abre **sem
+internet**, com os arquivos guardados no próprio aparelho. Ele não guarda dados
+do serviço no cache: login, consultas, fotos e assinaturas passam direto, e a
+fila de registros pendentes continua no armazenamento do aparelho, como antes.
+
+**Ao publicar uma versão nova:** basta construir e publicar (`npm run build`). O
+service worker carrega a impressão digital do que foi construído; quem estiver
+com o aplicativo aberto recebe o aviso "Nova versão pronta" e escolhe a hora de
+atualizar. **Ninguém é atualizado no meio de uma vistoria de propósito** — a
+troca no meio de uma tela aberta faria o aplicativo pedir arquivos que já não
+existem no servidor.
+
+Os arquivos de instalação (manifest, ícones, página de "sem conexão") são gerados
+por `npm run pwa:gerar`, e a marca por `npm run marca:gerar`. **Não edite o que
+está em `public/` à mão:** o teste `npm run test:pwa` reprova, de propósito.
+
 ## Segurança e operação
 
 - Sessões e perfis são verificados pelo servidor; contas pendentes ou banidas não acessam as tabelas operacionais.

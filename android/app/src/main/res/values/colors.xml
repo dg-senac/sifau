@@ -1,4 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Gerado por `npm run marca:android` — a fonte é src/lib/marca.ts.
+
+     colorPrimary/colorPrimaryDark/colorAccent são exigidas pelo tema em
+     values/styles.xml. Elas estavam faltando, e recurso faltando não deixa o
+     aplicativo feio: ele **não compila**. -->
 <resources>
-    <color name="ic_launcher_background">#1E40AF</color>
+    <color name="colorPrimary">#0d428b</color>
+    <color name="colorPrimaryDark">#07357d</color>
+    <color name="colorAccent">#1569db</color>
+    <color name="ic_launcher_background">#07357d</color>
+    <color name="splash_background">#07357d</color>
 </resources>

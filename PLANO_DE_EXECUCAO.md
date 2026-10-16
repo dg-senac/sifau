@@ -157,9 +157,20 @@ Aqui é onde os dois bugs de SQL morrem **por construção**, em vez de remendo.
 - **O que muda:** logo horizontal (login), vertical (splash), ícone do app, monocromática (PDF), favicon.
 - **Verificação:** preview local com a logo real na tela de login.
 
-### ⬜ Passo 14 — PWA instalável
-- **O que muda:** `manifest.webmanifest`, ícones, service worker.
-- **Resolve:** o botão secundário da landing page ("testar na hora") só funciona com isso. Fecha H4 e L4.
+### ✅ Passo 14 — Aplicativo instalável e funcionando sem conexão
+- **O que muda:** manifest, ícones (192, 512, recortável e iPhone), service worker, página de "sem conexão" e o aviso de versão nova. As fontes passaram a viajar dentro do aplicativo.
+- **Resolve:** o botão secundário da landing page ("testar na hora") só funciona com isso, e o fiscal em campo ganha o app abrindo sem sinal. **E resolve um problema que ninguém tinha notado:** as fontes vinham do servidor do Google **a cada abertura** — sem internet, o aplicativo abria com outra tipografia, justamente onde a conexão falha. Agora são 428 KB de fonte dentro do pacote.
+- **As decisões que não são óbvias** (todas tomadas pelo que aconteceria no aparelho do fiscal, não pelo que é mais comum na internet):
+  1. **O service worker nunca faz limpeza genérica.** A fila de fiscalização mora no armazenamento do aparelho; um `caches.delete()` ou um `localStorage.clear()` na troca de versão apagaria exatamente o dado que não tem como ser recuperado em lugar nenhum. A limpeza é por prefixo e só nos caches do SIFAU.
+  2. **Pedido com credencial não é arquivo.** O service worker só trata GET para o próprio endereço do aplicativo, e recusa qualquer pedido com cabeçalho de autorização. Login e consultas passam direto: guardar resposta de login em cache entregaria dado de um fiscal a outro no mesmo aparelho.
+  3. **A versão nova não toma o lugar da antiga sozinha.** Ela espera, e o aplicativo mostra "Nova versão pronta". Se a troca fosse automática (`skipWaiting`), uma tela aberta no meio de uma vistoria passaria a pedir arquivos que já não existem no servidor — porque os arquivos do Vite têm o conteúdo no próprio nome e somem na troca.
+  4. **Rede primeiro, com prazo de 3,5 s.** O caso ruim é o celular conectado a um wi-fi que não responde: sem prazo, o fiscal fica olhando tela branca até o navegador desistir sozinho (mais de um minuto). Com prazo, o aplicativo abre com o que está guardado, e o que está guardado é sempre da mesma versão.
+  5. **A página de "sem conexão" não promete o que não pode cumprir.** Ela só aparece quando o aplicativo não abriu, então não diz "seus registros serão enviados" — diz que os registros continuam guardados no aparelho, que é o que é verdade.
+- **Verificação, em três camadas:**
+  1. **12 defeitos injetados de propósito** (`npm run test:pwa:negativos`): cache apagado por inteiro, fila de fiscalização apagada, resposta de login guardada, versão antiga servida, casca apontando para arquivo inexistente, manifest sem tela cheia, ícone em caminho absoluto, página buscando coisa de fora e mais. **Todos pegos, e todos pelo motivo certo** — este teste nasceu de uma regra nossa: verificação que nunca reprovou não é proteção, é enfeite.
+  2. **Ele pegou duas fraquezas na própria verificação:** uma se satisfazia com o texto de um comentário (`updateViaCache` citado mas não usado) e outra, com metade do nome de uma constante (prazo declarado e nunca aplicado). As duas foram corrigidas, e agora o defeito injetado é reprovado de verdade.
+  3. **Verificação do aplicativo construído** (`npm run test:pwa:dist`): o service worker carrega a impressão digital de tudo o que foi construído; se os arquivos forem trocados depois, a verificação acusa — senão os fiscais ficariam presos numa versão antiga sem ninguém perceber.
+- **O que falta para você:** o botão "testar na hora" da landing page precisa de um endereço público em HTTPS onde o aplicativo esteja no ar (é de lá que o visitante instala). Enquanto isso não existir, o passo 16 tem o que mostrar apenas pelo APK.
 
 ### ⬜ Passo 15 — Release do APK
 - **O que muda:** ligar o `build-apk.yml` que já existe a uma Release no GitHub, com APK versionado.

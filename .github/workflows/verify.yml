@@ -40,3 +40,9 @@ jobs:
 
       - name: Build de produção
         run: npm run build
+
+      # A verificação de origem lê o código; esta lê o que saiu da construção.
+      # Um service worker correto no código que não chega ao dist deixa o
+      # aplicativo sem funcionar sem conexão, e sem nenhum aviso.
+      - name: Conferir o aplicativo construído
+        run: npm run test:pwa:dist

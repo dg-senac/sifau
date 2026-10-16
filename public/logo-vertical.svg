@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 210" role="img" aria-label="SIFAU — Fiscalização urbana inteligente">
+  <!-- Gerado por `npm run marca:gerar` — a fonte é src/lib/marca.ts. Não edite este arquivo à mão. -->
+  <g transform="translate(64 4) scale(1.4375)">
+    <defs>
+    <linearGradient id="sifau-v-grad" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="64" y2="64">
+    <stop offset="0" stop-color="#1569db"/>
+    <stop offset="1" stop-color="#07357d"/>
+  </linearGradient>
+    <clipPath id="sifau-v-recorte"><path d="M32 9.6 51 17.1v16.3c0 11.4-8.1 19.8-19 24-10.9-4.2-19-12.6-19-24V17.1z"/></clipPath>
+  </defs>
+  <g clip-path="url(#sifau-v-recorte)">
+    <path d="M32 9.6 51 17.1v16.3c0 11.4-8.1 19.8-19 24-10.9-4.2-19-12.6-19-24V17.1z" fill="url(#sifau-v-grad)"/>
+    <path d="M13.6 23.6H50.4" fill="none" stroke="#fff" stroke-width="2.2" opacity="0.9" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M22.6 34.2 29.4 41 42 28.2" fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="32" cy="49.5" r="3.1" fill="#fff"/>
+  </g>
+  </g>
+  <text x="110" y="152" text-anchor="middle" font-family="'Space Grotesk', 'DM Sans', system-ui, sans-serif" font-size="50" font-weight="700"
+    letter-spacing="2.5" textLength="158" lengthAdjust="spacing"
+    fill="#0d428b">SIFAU</text>
+  <text x="110" y="182" text-anchor="middle" font-family="'DM Sans', system-ui, sans-serif" font-size="11.5"
+    letter-spacing="0.4" textLength="176" lengthAdjust="spacing"
+    fill="#7890ae">Fiscalização urbana inteligente</text>
+</svg>

@@ -5,6 +5,14 @@ Estão em **inglês** de propósito: os modelos seguem instruções de tipografi
 
 ---
 
+> **Atualização:** a marca do SIFAU **já existe e está implementada em código**
+> (`src/lib/marca.ts`), com a tipografia real do aplicativo: símbolo, marca
+> horizontal, marca vertical, versão de uma cor, ícone do sistema e os recursos
+> do Android. Os prompts abaixo continuam valendo como **referência de direção
+> visual** — úteis se você quiser uma versão desenhada por um designer. Se for
+> esse o caso, peça a partir do desenho atual (`public/logo-*.svg`) em vez de
+> começar do zero: assim a marca não se divide em duas.
+
 ## 0. DNA visual que a logo precisa respeitar
 
 Extraído do próprio app, para a logo nascer combinando com o produto:

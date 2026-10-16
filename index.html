@@ -4,6 +4,17 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="./icon.svg" />
     <!--
+      Instalação: o manifest é o que permite "adicionar à tela de início" e o
+      aplicativo abrir em tela cheia. As marcações `apple-*` fazem o mesmo no
+      iPhone, que não lê o manifest.
+    -->
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="SIFAU" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <!--
       Sem maximum-scale nem user-scalable: bloquear o zoom por pinça é barreira
       de acessibilidade (WCAG 1.4.4) e atrapalha quem opera o app no sol, com o
       celular longe do rosto. O layout já é responsivo e não depende disso.

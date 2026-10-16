@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Símbolo SIFAU">
+  <!-- Gerado por `npm run marca:gerar` — a fonte é src/lib/marca.ts. Não edite este arquivo à mão. -->
+  <defs>
+    <linearGradient id="sifau-grad" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="64" y2="64">
+    <stop offset="0" stop-color="#1569db"/>
+    <stop offset="1" stop-color="#07357d"/>
+  </linearGradient>
+    <clipPath id="sifau-recorte"><path d="M32 9.6 51 17.1v16.3c0 11.4-8.1 19.8-19 24-10.9-4.2-19-12.6-19-24V17.1z"/></clipPath>
+  </defs>
+  <g clip-path="url(#sifau-recorte)">
+    <path d="M32 9.6 51 17.1v16.3c0 11.4-8.1 19.8-19 24-10.9-4.2-19-12.6-19-24V17.1z" fill="url(#sifau-grad)"/>
+    <path d="M13.6 23.6H50.4" fill="none" stroke="#fff" stroke-width="2.2" opacity="0.9" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M22.6 34.2 29.4 41 42 28.2" fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="32" cy="49.5" r="3.1" fill="#fff"/>
+  </g>
+</svg>
