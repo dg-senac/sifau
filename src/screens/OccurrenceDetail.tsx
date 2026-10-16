@@ -4,6 +4,7 @@ import {
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { Auditoria, Fiscal, Occurrence, OCCURRENCE_STATUSES, Vistoria, CATEGORIES, SUBCATEGORIES, URGENCY_LEVELS } from '@/lib/types';
+import { INSPECTION_COLUMNS } from '@/lib/columns';
 import { PageTitle, Badge, UrgencyBadge } from '@/components/ui';
 
 export function OccurrenceDetail({
@@ -38,7 +39,8 @@ export function OccurrenceDetail({
 
   const load = useCallback(async () => {
     const [{ data: vData }, { data: aData }, { data: fData }] = await Promise.all([
-      supabase.from('vistorias').select('*').eq('ocorrencia_id', item.id).order('created_at', { ascending: false }),
+      // A vistoria é exibida sem as fotos "depois": data, ação, laudo e multa.
+      supabase.from('vistorias').select(INSPECTION_COLUMNS).eq('ocorrencia_id', item.id).order('created_at', { ascending: false }),
       supabase.from('auditoria').select('*').eq('ocorrencia_id', item.id).order('created_at', { ascending: false }),
       supabase.rpc('get_fiscal_directory'),
     ]);

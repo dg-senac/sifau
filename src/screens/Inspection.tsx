@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { ACTIONS, Fiscal, Occurrence } from '@/lib/types';
+import { OCCURRENCE_COLUMNS } from '@/lib/columns';
 import { PageTitle, EmptyState, Badge } from '@/components/ui';
 import { PhotoUpload } from '@/components/PhotoUpload';
 import { createQueueId, enqueueBatch, isRecoverableSyncError } from '@/lib/offlineQueue';
@@ -27,7 +28,7 @@ export function Inspection({ fiscal }: { fiscal: Fiscal | null }) {
     }
     setLoading(true);
     const { data, error } = await supabase
-      .from('ocorrencias').select('*')
+      .from('ocorrencias').select(OCCURRENCE_COLUMNS)
       .eq('fiscal_designado', fiscalId)
       .in('status', ['Atribuída', 'Em vistoria'])
       .order('sla_deadline');

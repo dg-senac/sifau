@@ -4,6 +4,7 @@ import 'leaflet/dist/leaflet.css';
 import { Loader2, MapPin } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { Occurrence } from '@/lib/types';
+import { OCCURRENCE_COLUMNS } from '@/lib/columns';
 import { PageTitle } from '@/components/ui';
 
 const STATUS_COLOR: Record<string, string> = {
@@ -24,9 +25,11 @@ export function MapScreen() {
 
   useEffect(() => {
     const fetchOccurrences = async () => {
+      // O mapa precisa só de posição e rótulo do pino. Pedir `*` aqui chegava a
+      // baixar centenas de megabytes de fotos em base64 para desenhar pontos.
       const { data } = await supabase
         .from('ocorrencias')
-        .select('*')
+        .select(OCCURRENCE_COLUMNS)
         .not('latitude', 'is', null)
         .not('longitude', 'is', null)
         .order('created_at', { ascending: false })

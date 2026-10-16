@@ -26,7 +26,12 @@ export type Occurrence = {
   created_at: string;
   fiscal_registrou: string;
   fiscal_designado?: string | null;
-  fotos: string[];
+  /**
+   * Fotos da ocorrência, em base64. Presente apenas em consultas que pedem a
+   * coluna de propósito — as telas de lista e de detalhe não a solicitam, e
+   * nenhuma tela exibe esse conteúdo hoje. Ver `lib/columns.ts`.
+   */
+  fotos?: string[];
 };
 
 export type Vistoria = {
@@ -40,7 +45,11 @@ export type Vistoria = {
   acao_tomada: string;
   valor_multa: number | null;
   numero_processo: string | null;
-  fotos_depois: string[];
+  /**
+   * Fotos "depois", em base64. Só existe em consultas que pedem a coluna de
+   * propósito; não é exibida em nenhuma tela. Ver `lib/columns.ts`.
+   */
+  fotos_depois?: string[];
   created_at: string;
 };
 
@@ -87,7 +96,11 @@ export type AutoInfracao = {
   motivo: string;
   autuado_nome: string;
   autuado_documento: string;
-  assinatura_autuado: string | null;
+  /**
+   * Assinatura manuscrita do autuado, em base64. Não é exibida na listagem de
+   * autos e só vem em consultas que pedem a coluna de propósito.
+   */
+  assinatura_autuado?: string | null;
   ciencia: (typeof SCIENCE_TYPES)[number];
   testemunha_nome: string | null;
   pagamento: (typeof PAYMENT_STATUSES)[number];

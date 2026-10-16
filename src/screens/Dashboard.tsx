@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { OCCURRENCE_STATUSES } from '@/lib/types';
+import { OCCURRENCE_EXPORT_COLUMNS } from '@/lib/columns';
 import { PageTitle } from '@/components/ui';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -205,9 +206,13 @@ export function Dashboard() {
   const maxStatus = Math.max(...byStatus.map((s) => s.count), 1);
 
   const exportCSV = async () => {
-    const { data } = await supabase.from('ocorrencias').select('*');
+    // A exportação monta 10 colunas de texto. Antes ela pedia `*`, o que
+    // baixava os anexos de todas as ocorrências do banco para descartá-los.
+    const { data } = await supabase.from('ocorrencias').select(OCCURRENCE_EXPORT_COLUMNS);
     if (!data || data.length === 0) return;
-    const headers = ['id', 'categoria', 'subcategoria', 'descricao', 'status', 'urgencia', 'bairro', 'endereco', 'created_at', 'sla_deadline'];
+    // `as const` mantém a união literal dos cabeçalhos. Com isso o TypeScript
+    // verifica que cada cabeçalho corresponde a uma coluna realmente buscada.
+    const headers = ['id', 'categoria', 'subcategoria', 'descricao', 'status', 'urgencia', 'bairro', 'endereco', 'created_at', 'sla_deadline'] as const;
     const rows = data.map((row) =>
       headers.map((h) => `"${String(row[h] ?? '').replace(/"/g, '""')}"`).join(','),
     );

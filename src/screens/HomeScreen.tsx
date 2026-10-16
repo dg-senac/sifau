@@ -5,6 +5,7 @@ import {
 import { supabase } from '@/lib/supabase';
 import { Fiscal, Occurrence, Screen } from '@/lib/types';
 import { PageTitle, EmptyState, UrgencyBadge, Badge } from '@/components/ui';
+import { OCCURRENCE_COLUMNS } from '@/lib/columns';
 import { OccurrenceDetail } from '@/screens/OccurrenceDetail';
 
 export function HomeScreen({
@@ -27,7 +28,8 @@ export function HomeScreen({
   const fiscalId = fiscal?.id;
   const load = useCallback(async () => {
     setLoading(true);
-    let query = supabase.from('ocorrencias').select('*').order('created_at', { ascending: false }).limit(50);
+    // A lista não pede `fotos`: a coluna guarda base64 e não é exibida aqui.
+    let query = supabase.from('ocorrencias').select(OCCURRENCE_COLUMNS).order('created_at', { ascending: false }).limit(50);
     if (status !== 'Todos') query = query.eq('status', status);
     if (categoria !== 'Todas') query = query.eq('categoria', categoria);
     if (bairro !== 'Todos') query = query.eq('bairro', bairro);

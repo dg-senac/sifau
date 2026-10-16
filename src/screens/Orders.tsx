@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { AutoInfracao, Fiscal, OS_ORIGINS, OS_STATUSES, OrdemServico, Vistoria } from '@/lib/types';
+import { FINE_COLUMNS, INSPECTION_COLUMNS } from '@/lib/columns';
 import { PageTitle, EmptyState, Badge } from '@/components/ui';
 
 export function Orders({ fiscal }: { fiscal: Fiscal | null }) {
@@ -245,10 +246,14 @@ function OrderDetail({ order, fiscal, onClose }: { order: OrdemServico; fiscal: 
 
   useEffect(() => {
     const fetchOrderData = async () => {
-      const { data: vistoriasData } = await supabase.from('vistorias').select('*').eq('ocorrencia_id', order.ocorrencia_id ?? '');
+      // Nem as fotos "depois" da vistoria nem a assinatura do autuado são
+      // exibidas aqui — são as duas colunas mais pesadas dessas tabelas.
+      const { data: vistoriasData } = await supabase
+        .from('vistorias').select(INSPECTION_COLUMNS).eq('ocorrencia_id', order.ocorrencia_id ?? '');
       setVistorias(vistoriasData ?? []);
 
-      const { data: autosData } = await supabase.from('autos_infracao').select('*').eq('os_id', order.id);
+      const { data: autosData } = await supabase
+        .from('autos_infracao').select(FINE_COLUMNS).eq('os_id', order.id);
       setAutos(autosData ?? []);
     };
 
