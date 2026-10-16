@@ -12,7 +12,8 @@ import {
   AlertCircle
 } from 'lucide-react';
 import { Documento } from '@/lib/types';
-import { fileUtils } from '@/lib/documents';
+import { fileUtils } from '@/lib/fileUtils';
+import { AnexoImagem, BotaoBaixarAnexo } from '@/components/StorageFile';
 
 interface DocumentGalleryProps {
   documentos: Documento[];
@@ -97,13 +98,6 @@ export function DocumentGallery({
 
     await onReorder(reorderedDocs);
     setDraggedItem(null);
-  };
-
-  const handleDownload = (doc: Documento) => {
-    const link = document.createElement('a');
-    link.href = doc.arquivo_data;
-    link.download = doc.arquivo_nome || `documento-${doc.id}`;
-    link.click();
   };
 
   const handleNext = () => {
@@ -191,17 +185,15 @@ export function DocumentGallery({
                 }}
               >
                 <div className="gallery-item-image">
-                  <img src={doc.arquivo_data} alt={doc.titulo || 'Foto'} />
+                  <AnexoImagem path={doc.arquivo_path} alt={doc.titulo || 'Foto'} />
                   <div className="gallery-item-overlay">
-                    <button
-                      className="icon-button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleDownload(doc);
-                      }}
+                    <BotaoBaixarAnexo
+                      path={doc.arquivo_path}
+                      nome={doc.arquivo_nome}
+                      titulo={`Baixar ${doc.arquivo_nome || 'arquivo'}`}
                     >
                       <Download size={16} />
-                    </button>
+                    </BotaoBaixarAnexo>
                     {editable && onDelete && (
                       <button
                         className="icon-button delete"
@@ -268,12 +260,11 @@ export function DocumentGallery({
                     )}
                   </div>
                   <div className="document-item-actions">
-                    <button
-                      className="icon-button"
-                      onClick={() => handleDownload(doc)}
-                    >
-                      <Download size={18} />
-                    </button>
+                    <BotaoBaixarAnexo
+                      path={doc.arquivo_path}
+                      nome={doc.arquivo_nome}
+                      titulo={`Baixar ${doc.arquivo_nome || 'arquivo'}`}
+                    />
                     {editable && onDelete && (
                       <button
                         className="icon-button delete"
@@ -327,7 +318,11 @@ export function DocumentGallery({
             </button>
             
             <div className="modal-image-container">
-              <img src={selectedDoc.arquivo_data} alt={selectedDoc.titulo || 'Foto'} />
+              <AnexoImagem
+                path={selectedDoc.arquivo_path}
+                alt={selectedDoc.titulo || 'Foto'}
+                className="modal-imagem"
+              />
             </div>
             
             <button

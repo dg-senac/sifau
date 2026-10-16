@@ -4,7 +4,6 @@ import {
   Filter, 
   Search, 
   Calendar, 
-  Download, 
   Eye,
   FileText,
   Image as ImageIcon,
@@ -13,12 +12,12 @@ import {
   ChevronUp
 } from 'lucide-react';
 import { Documento } from '@/lib/types';
-import { fileUtils } from '@/lib/documents';
+import { fileUtils } from '@/lib/fileUtils';
+import { BotaoBaixarAnexo } from '@/components/StorageFile';
 
 interface DocumentHistoryProps {
   documentos: Documento[];
   onView?: (doc: Documento) => void;
-  onDownload?: (doc: Documento) => void;
   showFilters?: boolean;
 }
 
@@ -28,7 +27,6 @@ type SortType = 'recent' | 'oldest' | 'name' | 'size';
 export function DocumentHistory({
   documentos,
   onView,
-  onDownload,
   showFilters = true,
 }: DocumentHistoryProps) {
   const [filterType, setFilterType] = useState<FilterType>('all');
@@ -281,13 +279,11 @@ export function DocumentHistory({
                                 <Eye size={18} />
                               </button>
                             )}
-                            <button
-                              className="icon-button"
-                              onClick={() => onDownload ? onDownload(doc) : fileUtils.base64ToBlob(doc.arquivo_data, doc.arquivo_tipo || 'application/octet-stream')}
-                              title="Baixar"
-                            >
-                              <Download size={18} />
-                            </button>
+                            <BotaoBaixarAnexo
+                              path={doc.arquivo_path}
+                              nome={doc.arquivo_nome}
+                              titulo={`Baixar ${doc.arquivo_nome || 'arquivo'}`}
+                            />
                           </div>
                         </div>
                       );

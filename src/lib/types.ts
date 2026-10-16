@@ -183,8 +183,8 @@ export type Documento = {
   tipo_documento: (typeof DOCUMENT_TYPES)[number];
   titulo: string | null;
   descricao: string | null;
-  /** Conteúdo do arquivo em base64. Ver a nota sobre Storage em lib/documents.ts. */
-  arquivo_data: string;
+  /** Caminho do arquivo no bucket sifau-anexos — o arquivo não mora no banco. */
+  arquivo_path: string;
   arquivo_nome: string | null;
   arquivo_tipo: string | null;
   arquivo_tamanho: number | null;

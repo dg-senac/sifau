@@ -1,13 +1,36 @@
 import { supabase } from './supabase';
 import { Documento } from './types';
+import { createQueueId } from './offlineQueue';
+import { buildAnexoPath, removerAnexo, uploadAnexo } from './storage';
+import { fileUtils } from './fileUtils';
 
-// Funções para gerenciar documentos
+// ============================================================================
+// SIFAU — Biblioteca de documentos do fiscal
+// ============================================================================
+// Diferente das fotos de campo, o arquivo daqui é PDF e Word digitalizado, que
+// não dá para recomprimir: ele mora no bucket `sifau-anexos` e a linha guarda
+// só o caminho (`arquivo_path`).
+//
+// As consultas listam as colunas uma a uma de propósito: `select('*')` trazia o
+// conteúdo inteiro de cada documento para desenhar a lista, e é isso — não o
+// número de linhas — que deixava a tela lenta.
+// ============================================================================
+
+/**
+ * Colunas que o app realmente lê. Fora daqui só existe conteúdo no bucket.
+ *
+ * Numa linha só, de propósito: o `supabase-js` deduz o tipo do resultado a
+ * partir do texto literal passado ao `select`, e uma constante montada com `+`
+ * vira `string` — a dedução se perde e o retorno chega como `GenericStringError`.
+ */
+const CAMPOS_DOCUMENTO = 'id, fiscal_id, ocorrencia_id, vistoria_id, ordem_servico_id, tipo_documento, titulo, descricao, arquivo_path, arquivo_nome, arquivo_tipo, arquivo_tamanho, ordem, metadados, criado_em, atualizado_em';
+
 export const documentsApi = {
   // Buscar documentos por fiscal
   async getByFiscal(fiscalId: string) {
     const { data, error } = await supabase
       .from('documentos')
-      .select('*')
+      .select(CAMPOS_DOCUMENTO)
       .eq('fiscal_id', fiscalId)
       .order('criado_em', { ascending: false });
     
@@ -19,7 +42,7 @@ export const documentsApi = {
   async getByOccurrence(occurrenceId: string) {
     const { data, error } = await supabase
       .from('documentos')
-      .select('*')
+      .select(CAMPOS_DOCUMENTO)
       .eq('ocorrencia_id', occurrenceId)
       .order('ordem', { ascending: true });
     
@@ -31,7 +54,7 @@ export const documentsApi = {
   async getByVistoria(vistoriaId: string) {
     const { data, error } = await supabase
       .from('documentos')
-      .select('*')
+      .select(CAMPOS_DOCUMENTO)
       .eq('vistoria_id', vistoriaId)
       .order('ordem', { ascending: true });
     
@@ -43,7 +66,7 @@ export const documentsApi = {
   async getByOrdemServico(ordemServicoId: string) {
     const { data, error } = await supabase
       .from('documentos')
-      .select('*')
+      .select(CAMPOS_DOCUMENTO)
       .eq('ordem_servico_id', ordemServicoId)
       .order('ordem', { ascending: true });
     
@@ -56,7 +79,7 @@ export const documentsApi = {
     const { data, error } = await supabase
       .from('documentos')
       .insert(documento)
-      .select()
+      .select(CAMPOS_DOCUMENTO)
       .single();
     
     if (error) throw error;
@@ -69,7 +92,7 @@ export const documentsApi = {
       .from('documentos')
       .update(updates)
       .eq('id', id)
-      .select()
+      .select(CAMPOS_DOCUMENTO)
       .single();
     
     if (error) throw error;
@@ -97,147 +120,72 @@ export const documentsApi = {
     if (failedUpdate) throw failedUpdate;
   },
 
+  /**
+   * Sobe um arquivo e grava a linha do documento.
+   *
+   * A ordem importa e é a mesma das fotos de campo: o arquivo entra no bucket
+   * ANTES da linha. Se a linha falhasse primeiro, o registro apontaria para um
+   * arquivo que não existe; falhando depois, o pior caso é um arquivo no bucket
+   * sem linha — e esse é removido aqui mesmo.
+   */
+  async enviarArquivo({
+    arquivo, fiscalId, ordem, tipo = 'documento',
+  }: {
+    arquivo: File;
+    fiscalId: string;
+    ordem: number;
+    tipo?: Documento['tipo_documento'];
+  }): Promise<Documento> {
+    const dataUrl = await fileUtils.fileToBase64(arquivo, true);
+    const mime = fileUtils.mimeDoDataUrl(dataUrl);
+    const documentoId = createQueueId();
+    const caminho = buildAnexoPath(fiscalId, documentoId, new Date(), fileUtils.extensaoDoMime(mime));
+
+    await uploadAnexo(caminho, dataUrl);
+
+    try {
+      return await documentsApi.create({
+        fiscal_id: fiscalId,
+        ocorrencia_id: null,
+        vistoria_id: null,
+        ordem_servico_id: null,
+        tipo_documento: tipo,
+        titulo: arquivo.name,
+        descricao: null,
+        arquivo_path: caminho,
+        arquivo_nome: arquivo.name,
+        arquivo_tipo: mime,
+        // Tamanho do que foi GRAVADO: uma foto reduzida na tela ocupa bem menos
+        // que o arquivo original, e é o número gravado que descreve o acervo.
+        arquivo_tamanho: Math.ceil((dataUrl.length - dataUrl.indexOf(',') - 1) * 0.75),
+        ordem,
+        metadados: { uploadDate: new Date().toISOString(), originalName: arquivo.name },
+      });
+    } catch (error) {
+      await removerAnexo(caminho).catch((falha) => {
+        console.error('Arquivo ficou no bucket sem linha de documento:', caminho, falha);
+      });
+      throw error;
+    }
+  },
+
+  /** Apaga a linha e, depois, o arquivo. Linha primeiro: ela é a fonte da verdade. */
+  async removerDocumento(documento: Pick<Documento, 'id' | 'arquivo_path'>) {
+    await documentsApi.delete(documento.id);
+    await removerAnexo(documento.arquivo_path).catch((falha) => {
+      console.error('Documento apagado, mas o arquivo ficou no bucket:', documento.arquivo_path, falha);
+    });
+  },
+
   // Buscar documento por ID
   async getById(id: string) {
     const { data, error } = await supabase
       .from('documentos')
-      .select('*')
+      .select(CAMPOS_DOCUMENTO)
       .eq('id', id)
       .single();
     
     if (error) throw error;
     return data as Documento;
-  },
-};
-
-// Funções auxiliares para converter arquivos
-export const fileUtils = {
-  // Evitar arquivos enormes em base64; uploads vão pelo REST e não pelo Storage.
-  validateFileSize(file: File, maxSizeMB: number = 5): boolean {
-    const maxSizeBytes = maxSizeMB * 1024 * 1024;
-    return file.size <= maxSizeBytes;
-  },
-
-  validateFileType(file: File): boolean {
-    const allowedTypes = new Set([
-      'image/jpeg', 'image/png', 'image/webp', 'application/pdf', 'application/msword',
-      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    ]);
-    const allowedExtensions = new Set(['jpg', 'jpeg', 'png', 'webp', 'pdf', 'doc', 'docx']);
-    const extension = file.name.split('.').pop()?.toLowerCase() ?? '';
-    return allowedExtensions.has(extension) && (!file.type || allowedTypes.has(file.type));
-  },
-
-  // Comprimir imagem antes de converter para base64
-  async compressImage(file: File, maxWidth: number = 1920, quality: number = 0.85): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const img = new Image();
-        img.onload = () => {
-          const canvas = document.createElement('canvas');
-          let width = img.width;
-          let height = img.height;
-
-          // Redimensionar se necessário
-          if (width > maxWidth) {
-            height = (height * maxWidth) / width;
-            width = maxWidth;
-          }
-
-          canvas.width = width;
-          canvas.height = height;
-
-          const ctx = canvas.getContext('2d');
-          if (!ctx) {
-            reject(new Error('Failed to get canvas context'));
-            return;
-          }
-
-          ctx.drawImage(img, 0, 0, width, height);
-
-          // Converter para base64 com compressão
-          const compressedDataUrl = canvas.toDataURL('image/jpeg', quality);
-          resolve(compressedDataUrl);
-        };
-        img.onerror = reject;
-        img.src = e.target?.result as string;
-      };
-      reader.onerror = reject;
-      reader.readAsDataURL(file);
-    });
-  },
-
-  // Converter arquivo para base64 (com compressão para imagens)
-  async fileToBase64(file: File, compress: boolean = true): Promise<string> {
-    // Validar tamanho
-    if (!this.validateFileSize(file, 5)) {
-      throw new Error('Arquivo muito grande. Máximo permitido: 5MB');
-    }
-    if (!this.validateFileType(file)) {
-      throw new Error('Tipo de arquivo não permitido. Envie imagens JPG, PNG ou WebP, PDF ou Word.');
-    }
-
-    // Se for imagem e compressão estiver habilitada, comprimir
-    if (compress && file.type.startsWith('image/')) {
-      return this.compressImage(file);
-    }
-
-    // Para outros arquivos, converter direto
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result as string);
-      reader.onerror = reject;
-      reader.readAsDataURL(file);
-    });
-  },
-
-  // Converter base64 para blob
-  base64ToBlob(base64: string, mimeType: string): Blob {
-    const byteCharacters = atob(base64.split(',')[1]);
-    const byteArrays = [];
-    
-    for (let offset = 0; offset < byteCharacters.length; offset += 512) {
-      const slice = byteCharacters.slice(offset, offset + 512);
-      const byteNumbers = new Array(slice.length);
-      
-      for (let i = 0; i < slice.length; i++) {
-        byteNumbers[i] = slice.charCodeAt(i);
-      }
-      
-      const byteArray = new Uint8Array(byteNumbers);
-      byteArrays.push(byteArray);
-    }
-    
-    return new Blob(byteArrays, { type: mimeType });
-  },
-
-  // Determinar MIME type
-  getMimeType(fileName: string): string {
-    const ext = fileName.split('.').pop()?.toLowerCase();
-    const mimeTypes: Record<string, string> = {
-      jpg: 'image/jpeg',
-      jpeg: 'image/jpeg',
-      png: 'image/png',
-      gif: 'image/gif',
-      pdf: 'application/pdf',
-      doc: 'application/msword',
-      docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-      xls: 'application/vnd.ms-excel',
-      xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    };
-    
-    return mimeTypes[ext || ''] || 'application/octet-stream';
-  },
-
-  // Formatar tamanho do arquivo
-  formatFileSize(bytes: number): string {
-    if (bytes === 0) return '0 Bytes';
-    
-    const k = 1024;
-    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    
-    return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
   },
 };

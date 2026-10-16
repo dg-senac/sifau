@@ -97,12 +97,14 @@ export const SAMPLE_STORAGE_PATH =
   '33333333-3333-4333-8333-333333333333/2026/10/foto-de-teste.jpg';
 
 /**
- * Arquivo EMBUTIDO (data URL base64) — o formato antigo.
+ * Arquivo EMBUTIDO (data URL base64) — o formato antigo, hoje proibido.
  *
- * Continua legítimo em `documentos.arquivo_data`, que só migra para o Storage
- * depois. Nas colunas de foto de campo é RECUSADO pelo gatilho
- * `reject_inline_base64`, e existe teste para isso: foi o base64 dentro da
- * linha que fez o banco encher em ~63 ciclos de fiscalização.
+ * Nenhuma coluna do banco aceita mais arquivo dentro da linha: as cinco
+ * (`ocorrencias.fotos`, `vistorias.fotos_depois`, `autos_infracao.assinatura_autuado`,
+ * `documentos.arquivo_path` e `admin_messages.attachments`) são vigiadas pelo
+ * gatilho `reject_inline_base64`. Este valor existe só para provar a recusa, e
+ * existe teste para isso: foi o base64 dentro da linha que fez o banco encher
+ * em ~63 ciclos de fiscalização.
  */
 export const SAMPLE_PHOTO = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQ==';
 

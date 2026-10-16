@@ -7,7 +7,7 @@
 // administrador), e não dá para anexar documento a registro de outra pessoa.
 // ============================================================================
 
-import { IDS, seedScenario, createOccurrence, SAMPLE_PHOTO } from '../fixtures.mjs';
+import { IDS, seedScenario, createOccurrence, SAMPLE_PHOTO, SAMPLE_STORAGE_PATH } from '../fixtures.mjs';
 
 export default {
   name: 'documentos',
@@ -24,10 +24,10 @@ export default {
       const { rows } = await db.as(IDS.active, 'authenticated', async () =>
         db.query(
           `INSERT INTO public.documentos
-             (fiscal_id, ocorrencia_id, tipo_documento, titulo, arquivo_data, arquivo_nome, arquivo_tipo)
+             (fiscal_id, ocorrencia_id, tipo_documento, titulo, arquivo_path, arquivo_nome, arquivo_tipo)
            VALUES ($1, $2, 'foto', 'Fachada do imóvel', $3, 'fachada.jpg', 'image/jpeg')
            RETURNING id`,
-          [IDS.active, ocorrencia, SAMPLE_PHOTO],
+          [IDS.active, ocorrencia, SAMPLE_STORAGE_PATH],
         ));
       docId = rows[0]?.id;
       t.ok(docId, 'documento gravado');
@@ -55,9 +55,9 @@ export default {
       await db.as(IDS.other, 'authenticated', async () => {
         await t.denies(
           () => db.query(
-            `INSERT INTO public.documentos (fiscal_id, tipo_documento, arquivo_data)
+            `INSERT INTO public.documentos (fiscal_id, tipo_documento, arquivo_path)
              VALUES ($1, 'foto', $2)`,
-            [IDS.active, SAMPLE_PHOTO],
+            [IDS.active, SAMPLE_STORAGE_PATH + '-outro'],
           ),
           'documento em nome de outro fiscal',
         );
@@ -69,9 +69,9 @@ export default {
       await db.as(IDS.other, 'authenticated', async () => {
         await t.denies(
           () => db.query(
-            `INSERT INTO public.documentos (fiscal_id, ocorrencia_id, tipo_documento, arquivo_data)
+            `INSERT INTO public.documentos (fiscal_id, ocorrencia_id, tipo_documento, arquivo_path)
              VALUES ($1, $2, 'foto', $3)`,
-            [IDS.other, ocorrencia, SAMPLE_PHOTO],
+            [IDS.other, ocorrencia, SAMPLE_STORAGE_PATH + '-alheio'],
           ),
           'documento vinculado a ocorrência alheia',
         );
@@ -82,13 +82,13 @@ export default {
       // O grant de UPDATE cobre apenas a coluna `ordem`: o arquivo é imutável.
       await db.as(IDS.active, 'authenticated', async () => {
         await t.denies(
-          () => db.query(`UPDATE public.documentos SET arquivo_data = $1 WHERE id = $2`,
-            ['data:image/jpeg;base64,ADULTERADO', docId]),
+          () => db.query(`UPDATE public.documentos SET arquivo_path = $1 WHERE id = $2`,
+            ['outro/dono/2026/10/adulterado.jpg', docId]),
           'alteração do conteúdo do documento',
         );
       });
-      const { rows } = await db.owner(`SELECT arquivo_data FROM public.documentos WHERE id = $1`, [docId]);
-      t.eq(rows[0].arquivo_data, SAMPLE_PHOTO, 'conteúdo preservado');
+      const { rows } = await db.owner(`SELECT arquivo_path FROM public.documentos WHERE id = $1`, [docId]);
+      t.eq(rows[0].arquivo_path, SAMPLE_STORAGE_PATH, 'caminho preservado');
     });
 
     await t.test('fiscal reordena o próprio documento', async () => {

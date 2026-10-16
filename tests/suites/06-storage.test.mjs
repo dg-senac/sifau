@@ -267,5 +267,59 @@ export default {
         `recusado pelo gatilho (mensagem: ${mensagem || 'nenhuma — o insert passou'})`,
       );
     });
+
+    await t.test('documento do fiscal guarda caminho, não arquivo embutido', async () => {
+      // A biblioteca digitalizada é o ponto onde o banco mais crescia por
+      // upload: PDF e Word não dão para recomprimir.
+      const caminho = caminhoDe(IDS.active, 'digitalizacao.pdf');
+      const { rows } = await db.as(IDS.active, 'authenticated', async () =>
+        db.query(
+          `INSERT INTO public.documentos
+             (fiscal_id, tipo_documento, titulo, arquivo_path, arquivo_nome, arquivo_tipo)
+           VALUES ($1, 'documento', 'Digitalização da notificação', $2, 'digitalizacao.pdf', 'application/pdf')
+           RETURNING id, arquivo_path`,
+          [IDS.active, caminho],
+        ));
+      t.eq(rows[0]?.arquivo_path, caminho, 'caminho guardado na coluna');
+    });
+
+    await t.test('a coluna antiga do documento não existe mais', async () => {
+      // Guarda contra a divergência entre os dois caminhos de instalação: se
+      // alguém renomear a coluna só no SETUP (ou só na migration), o app passa a
+      // ler uma coluna que não existe em um dos dois bancos.
+      const { rows } = await db.owner(`
+        SELECT column_name FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'documentos'
+          AND column_name IN ('arquivo_data', 'arquivo_path')
+        ORDER BY column_name`);
+      t.eq(rows.map((r) => r.column_name), ['arquivo_path'], 'colunas de arquivo em documentos');
+
+      // Renomear coluna não renomeia a restrição derivada dela: sem o cuidado
+      // explícito, o banco migrado guarda `documentos_arquivo_data_not_null`
+      // descrevendo `arquivo_path` — nome que mente e diverge do banco novo.
+      const restricoes = await db.owner(`
+        SELECT conname FROM pg_constraint
+        WHERE conrelid = 'public.documentos'::regclass AND conname LIKE '%arquivo_data%'`);
+      t.eq(restricoes.rows.map((r) => r.conname), [], 'restrições com o nome antigo');
+    });
+
+    await t.test('o gatilho recusa documento embutido (base64)', async () => {
+      let mensagem = '';
+      await db.as(IDS.active, 'authenticated', async () => {
+        try {
+          await db.query(
+            `INSERT INTO public.documentos (fiscal_id, tipo_documento, arquivo_path)
+             VALUES ($1, 'foto', $2)`,
+            [IDS.active, SAMPLE_PHOTO],
+          );
+        } catch (error) {
+          mensagem = error.message;
+        }
+      });
+      t.ok(
+        mensagem.includes('não aceita arquivo embutido'),
+        `recusado pelo gatilho (mensagem: ${mensagem || 'nenhuma — o insert passou'})`,
+      );
+    });
   },
 };

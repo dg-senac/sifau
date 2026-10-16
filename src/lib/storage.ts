@@ -122,3 +122,40 @@ export async function removerAnexo(path: string): Promise<void> {
   const { error } = await supabase.storage.from(ANEXOS_BUCKET).remove([path]);
   if (error) throw error;
 }
+
+/**
+ * URL assinada de curta duração para um arquivo do bucket privado.
+ *
+ * O bucket não tem leitura pública: a tela pede a URL na hora de exibir, e ela
+ * expira. Quem não tem direito ao arquivo não recebe URL — a política de SELECT
+ * do bucket é conferida nesta chamada, com a sessão do usuário.
+ *
+ * `download` faz o navegador baixar em vez de abrir; `nome` é o nome sugerido
+ * do arquivo, para o fiscal não receber `3f9c...jpg`.
+ */
+export async function getSignedUrl(
+  path: string,
+  { expiresIn = 3600, nome }: { expiresIn?: number; nome?: string | null } = {},
+): Promise<string> {
+  const { data, error } = await supabase.storage
+    .from(ANEXOS_BUCKET)
+    .createSignedUrl(path, expiresIn, nome ? { download: nome } : undefined);
+  if (error) throw error;
+  if (!data?.signedUrl) throw new Error('O Storage não devolveu a URL do arquivo.');
+  return data.signedUrl;
+}
+
+/** Extensão do arquivo no caminho, em minúsculas. */
+export function extensaoDoPath(path: string): string {
+  return path.split('?')[0].split('.').pop()?.toLowerCase() ?? '';
+}
+
+/** Um caminho de imagem pode ser mostrado direto na tela; o resto é download. */
+export function ehImagem(path: string): boolean {
+  return ['jpg', 'jpeg', 'png', 'webp', 'gif', 'heic'].includes(extensaoDoPath(path));
+}
+
+/** Nome do arquivo a partir do caminho, para exibir e para baixar. */
+export function nomeDoPath(path: string): string {
+  return path.split('/').pop() ?? path;
+}

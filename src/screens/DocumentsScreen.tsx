@@ -14,7 +14,9 @@ import {
   RefreshCw
 } from 'lucide-react';
 import { Fiscal, Documento } from '@/lib/types';
-import { documentsApi, fileUtils } from '@/lib/documents';
+import { documentsApi } from '@/lib/documents';
+import { fileUtils } from '@/lib/fileUtils';
+import { AnexoImagem, BotaoBaixarAnexo } from '@/components/StorageFile';
 import { DocumentGallery } from '@/components/DocumentGallery';
 import { DocumentHistory } from '@/components/DocumentHistory';
 import { PageTitle, EmptyState } from '@/components/ui';
@@ -53,60 +55,49 @@ export function DocumentsScreen({ fiscal }: { fiscal: Fiscal | null }) {
   }, [loadDocuments]);
 
   const handleUpload = async (files: File[]) => {
-    if (!fiscal) return;
+    if (!fiscal || files.length === 0) return;
     setUploading(true);
 
-    try {
-      for (const file of files) {
-        // Validar tamanho antes de processar
-        if (!fileUtils.validateFileSize(file, 5)) {
-          throw new Error(`Arquivo "${file.name}" excede o limite de 5MB`);
-        }
-        if (!fileUtils.validateFileType(file)) {
-          throw new Error(`Tipo de arquivo não permitido: ${file.name}`);
-        }
+    // Cada arquivo é independente: uma falha (tipo não aceito, arquivo grande,
+    // rede) não impede os outros de subir — e o aviso diz exatamente o que
+    // entrou e o que não entrou, em vez de um "erro no upload" genérico.
+    const falhas: string[] = [];
+    let enviados = 0;
 
-        const base64 = await fileUtils.fileToBase64(file, true);
-        
-        const documento: Omit<Documento, 'id' | 'criado_em' | 'atualizado_em'> = {
-          fiscal_id: fiscal.id,
-          ocorrencia_id: null,
-          vistoria_id: null,
-          ordem_servico_id: null,
-          tipo_documento: file.type.startsWith('image/') ? 'foto' : 'documento',
-          titulo: file.name,
-          descricao: null,
-          arquivo_data: base64,
-          arquivo_nome: file.name,
-          arquivo_tipo: file.type,
-          arquivo_tamanho: file.size,
-          ordem: documentos.length,
-          metadados: {
-            uploadDate: new Date().toISOString(),
-            originalName: file.name,
-          },
-        };
-
-        await documentsApi.create(documento);
+    for (const [indice, arquivo] of files.entries()) {
+      try {
+        await documentsApi.enviarArquivo({
+          arquivo,
+          fiscalId: fiscal.id,
+          ordem: documentos.length + indice,
+          tipo: arquivo.type.startsWith('image/') ? 'foto' : 'documento',
+        });
+        enviados += 1;
+      } catch (error) {
+        console.error('Erro ao enviar documento:', arquivo.name, error);
+        falhas.push(`${arquivo.name}: ${error instanceof Error ? error.message : 'falha no envio'}`);
       }
+    }
 
-      await loadDocuments();
-    } catch (error) {
-      console.error('Erro ao fazer upload:', error);
-      alert(error instanceof Error ? error.message : 'Erro ao fazer upload');
-    } finally {
-      setUploading(false);
+    await loadDocuments();
+    setUploading(false);
+
+    if (falhas.length > 0) {
+      alert(`Enviados ${enviados} de ${files.length} arquivo(s).\n\n${falhas.join('\n')}`);
     }
   };
 
   const handleDelete = async (id: string) => {
+    const documento = documentos.find((doc) => doc.id === id);
+    if (!documento) return;
     if (!confirm('Tem certeza que deseja excluir este documento?')) return;
 
     try {
-      await documentsApi.delete(id);
+      await documentsApi.removerDocumento(documento);
       await loadDocuments();
     } catch (error) {
       console.error('Erro ao deletar documento:', error);
+      alert('Não foi possível excluir o documento. Tente novamente.');
     }
   };
 
@@ -117,13 +108,6 @@ export function DocumentsScreen({ fiscal }: { fiscal: Fiscal | null }) {
     } catch (error) {
       console.error('Erro ao reordenar documentos:', error);
     }
-  };
-
-  const handleDownload = (doc: Documento) => {
-    const link = document.createElement('a');
-    link.href = doc.arquivo_data;
-    link.download = doc.arquivo_nome || `documento-${doc.id}`;
-    link.click();
   };
 
   const handleView = (doc: Documento) => {
@@ -320,7 +304,6 @@ export function DocumentsScreen({ fiscal }: { fiscal: Fiscal | null }) {
         <DocumentHistory
           documentos={filteredDocs}
           onView={handleView}
-          onDownload={handleDownload}
           showFilters={false}
         />
       )}
@@ -338,18 +321,24 @@ export function DocumentsScreen({ fiscal }: { fiscal: Fiscal | null }) {
             
             <div className="modal-content">
               {selectedDoc.tipo_documento === 'foto' || selectedDoc.arquivo_tipo?.startsWith('image/') ? (
-                <img src={selectedDoc.arquivo_data} alt={selectedDoc.titulo ?? 'Documento'} />
+                <AnexoImagem
+                  path={selectedDoc.arquivo_path}
+                  alt={selectedDoc.titulo ?? 'Documento'}
+                  className="modal-imagem"
+                />
               ) : (
                 <div className="document-preview">
                   <FileText size={48} />
                   <p>Visualização não disponível para este tipo de arquivo</p>
-                  <button
+                  <BotaoBaixarAnexo
+                    path={selectedDoc.arquivo_path}
+                    nome={selectedDoc.arquivo_nome}
                     className="primary-button"
-                    onClick={() => handleDownload(selectedDoc)}
+                    titulo="Baixar arquivo"
                   >
                     <Download size={16} />
                     Baixar arquivo
-                  </button>
+                  </BotaoBaixarAnexo>
                 </div>
               )}
             </div>
@@ -372,12 +361,11 @@ export function DocumentsScreen({ fiscal }: { fiscal: Fiscal | null }) {
                 >
                   <Trash2 size={18} />
                 </button>
-                <button
-                  className="icon-button"
-                  onClick={() => handleDownload(selectedDoc)}
-                >
-                  <Download size={18} />
-                </button>
+                <BotaoBaixarAnexo
+                  path={selectedDoc.arquivo_path}
+                  nome={selectedDoc.arquivo_nome}
+                  titulo={`Baixar ${selectedDoc.arquivo_nome || 'arquivo'}`}
+                />
               </div>
             </div>
           </div>

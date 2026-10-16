@@ -32,13 +32,7 @@ const TABELAS_PESADAS = {
   ocorrencias: { coluna: 'fotos', permitidoEm: [] },
   vistorias: { coluna: 'fotos_depois', permitidoEm: [] },
   autos_infracao: { coluna: 'assinatura_autuado', permitidoEm: [] },
-  documentos: {
-    coluna: 'arquivo_data',
-    // A galeria precisa do conteúdo para renderizar as imagens e baixar o
-    // arquivo. Diferente das listas, aqui o anexo é o propósito da tela.
-    // O passo de migração para Supabase Storage substitui isto por URL assinada.
-    permitidoEm: ['src/lib/documents.ts'],
-  },
+  documentos: { coluna: 'arquivo_path', permitidoEm: [] },
   admin_messages: {
     coluna: 'attachments',
     // O painel administrativo exibe os anexos na conversa.
