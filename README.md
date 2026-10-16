@@ -121,6 +121,45 @@ base64 não é uma decisão que passe despercebida.
 > migrations `20261015000000` a `20261018000000`. Sem isso o app funciona e o
 > registro entra na fila, mas o arquivo não sobe.
 
+## Gerar o APK e publicar uma versão
+
+O APK é gerado no GitHub (`.github/workflows/build-apk.yml`), em dois caminhos:
+enviar uma etiqueta `v1.2.0` publica uma Release com o APK anexado; rodar o
+workflow à mão gera o APK como arquivo de execução, sem publicar.
+
+Antes de gerar, configure em **Settings → Secrets and variables → Actions**:
+`VITE_SUPABASE_URL` e `VITE_SUPABASE_ANON_KEY` (obrigatórios) e
+`ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` e
+`ANDROID_KEY_PASSWORD` (para assinar com a chave do órgão). Sem a chave, o APK
+sai assinado com a chave de teste — serve para conferir, **não para distribuir**:
+um aplicativo assinado com a chave de teste não pode ser atualizado por um
+assinado com a chave oficial, e quem instalar teria de desinstalar antes.
+
+> **A chave de assinatura é insubstituível.** Se ela for perdida, não existe
+> forma de publicar atualização para quem já instalou o aplicativo — só publicar
+> outro aplicativo, com outro identificador. Guarde o arquivo `.jks` e as senhas
+> em cofre, fora do GitHub.
+
+### Sobre o `tar` fixado em `overrides` (leia antes de "corrigir" o `npm audit`)
+
+O `package.json` fixa `tar@^6.2.1` **apenas** para `@capacitor/cli`. Isso é
+deliberado e não é um descuido de segurança:
+
+- A versão 7 do `tar` corrige avisos de segurança que o `npm audit` aponta na
+  linha 6, **mas quebra o Capacitor**: o CLI chama `require('tar').default.extract`
+  e o `tar` 7 marca `__esModule` sem exportar `default`. O resultado é
+  `Cannot read properties of undefined (reading 'extract')` e **nenhum APK é
+  gerado** — foi exatamente o que aconteceu, e o build ficou vermelho por dias.
+- O `tar` só é usado na hora de gerar o APK, na máquina ou no runner, para
+  desempacotar o modelo que vem **dentro do próprio pacote do Capacitor**. Ele
+  não vai para o aplicativo do fiscal e não recebe arquivo de terceiros.
+- O conserto de verdade é subir o Capacitor para a versão 8 (que usa `tar` 7),
+  junto com `@capacitor/core`, `@capacitor/android` e os plugins — mudança de
+  versão maior, com verificação própria, não um ajuste de última hora.
+
+`npm run test:android` reprova se o `tar` for fixado de novo para o Capacitor —
+antes de gerar o APK, e sem precisar de SDK de Android.
+
 ## Instalação e funcionamento sem conexão
 
 O aplicativo pode ser instalado pelo navegador (Android e iPhone) e abre **sem

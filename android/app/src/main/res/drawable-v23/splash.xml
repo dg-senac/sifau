@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Gerado por `npm run marca:android`.
+     Fundo preenche a tela, escudo fica centrado em tamanho fixo — quem
+     posiciona é o sistema, então não há deformação em tela de proporção
+     diferente (que é o que acontece com imagem esticada). -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@drawable/splash_fundo" />
+    <item android:drawable="@drawable/splash_escudo" android:gravity="center" />
+</layer-list>

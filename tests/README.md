@@ -20,6 +20,8 @@ npm run test:unit             # funções puras do app (sem navegador, sem Supab
 npm run test:marca            # a marca em public/ é a que a fonte gera
 npm run test:assets           # nenhuma fonte ou ícone de terceiro no app
 npm run test:pwa              # manifest, service worker, casca e registro
+npm run test:release          # versão do APK, assinatura e chave fora do Git
+npm run test:android          # Capacitor roda, recursos do tema existem, ícone é o do SIFAU
 npm run verify                # tudo em sequência, com tipo, lint e build
 ```
 
@@ -29,6 +31,8 @@ arquivos do projeto:
 ```bash
 npm run test:pwa:dist         # o app CONSTRUÍDO: instalável, fontes próprias, versão certa
 npm run test:pwa:negativos    # injeta 12 defeitos de propósito e confere que são pegos
+npm run test:release:negativos  # 12 defeitos na publicação do APK
+npm run test:android:negativos  # 7 defeitos que impedem o APK de compilar
 ```
 
 O `test:pwa:negativos` é o mais importante dos dois: ele existe para provar que

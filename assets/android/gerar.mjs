@@ -182,22 +182,47 @@ function gerarAbertura() {
 
   writeFileSync(join(drawable, 'splash_escudo.xml'), vetorDoEscudo(96, 68, 5.4), 'utf8');
 
+  // A abertura tem DUAS versões de propósito, e a razão é uma limitação do
+  // Android:
+  //
+  //   * `android:gravity` em camada de `layer-list` só existe a partir do
+  //     Android 6 (API 23). Antes disso, a camada é desenhada no canto
+  //     superior esquerdo;
+  //   * o escudo é um desenho vetorial, e `<bitmap>` dentro de `layer-list` só
+  //     aceita imagem — colocar vetor ali é erro de compilação do aapt2.
+  //
+  // Então: do Android 6 em diante, fundo sólido + escudo centrado; no Android 5,
+  // só o fundo da marca. Do Android 12 em diante quem desenha a abertura é o
+  // próprio sistema (com o ícone do aplicativo sobre o fundo definido no tema),
+  // e aí não há nada a fazer aqui.
   writeFileSync(
     join(drawable, 'splash.xml'),
     `<?xml version="1.0" encoding="utf-8"?>
-<!-- Gerado por \`npm run marca:android\`.
-     Duas camadas: o fundo preenche a tela e o escudo fica centrado, sempre no
-     tamanho certo — porque quem posiciona é o sistema, não o recorte da imagem. -->
+<!-- Gerado por \`npm run marca:android\`. Versão do Android 5 (sem centragem). -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
     <item android:drawable="@drawable/splash_fundo" />
-    <item>
-        <bitmap android:src="@drawable/splash_escudo" android:gravity="center" />
-    </item>
 </layer-list>
 `,
     'utf8',
   );
-  console.log('✓ drawable/splash.xml (fundo sólido + escudo centrado)');
+
+  const v23 = join(RES, 'drawable-v23');
+  mkdirSync(v23, { recursive: true });
+  writeFileSync(
+    join(v23, 'splash.xml'),
+    `<?xml version="1.0" encoding="utf-8"?>
+<!-- Gerado por \`npm run marca:android\`.
+     Fundo preenche a tela, escudo fica centrado em tamanho fixo — quem
+     posiciona é o sistema, então não há deformação em tela de proporção
+     diferente (que é o que acontece com imagem esticada). -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@drawable/splash_fundo" />
+    <item android:drawable="@drawable/splash_escudo" android:gravity="center" />
+</layer-list>
+`,
+    'utf8',
+  );
+  console.log('✓ drawable/splash.xml (Android 5) e drawable-v23/splash.xml (centrado)');
 }
 
 function atualizarCores() {

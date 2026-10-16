@@ -35,7 +35,10 @@ jobs:
       - name: Instalar dependências
         run: npm ci
 
-      - name: Tipo, lint, testes (unidade e banco), paridade e re-execução
+      # O `verify` inclui a verificação do projeto Android (tests/check-android.mjs),
+      # que confere sem SDK: o Capacitor consegue rodar, todo recurso citado pelo
+      # tema existe e o ícone é o do SIFAU. As três coisas já quebraram o APK.
+      - name: Tipo, lint, testes (unidade, banco, PWA, Android), paridade e re-execução
         run: npm run verify
 
       - name: Build de produção
