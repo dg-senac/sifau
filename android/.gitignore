@@ -52,10 +52,16 @@ captures/
 # Comment next line if keeping position of elements in Navigation Editor is relevant for you
 .idea/navEditor.xml
 
-# Keystore files
-# Uncomment the following lines if you do not want to check your keystore files in.
-#*.jks
-#*.keystore
+# ── Chave de assinatura do aplicativo ──────────────────────────────────────
+# Estas linhas estão aqui, e não comentadas como no modelo do Android, porque
+# deixar isso a critério de quem lembrar é como uma chave privada acaba dentro do
+# Git — e uma chave privada versionada não pode ser "despublicada": o histórico
+# fica, e qualquer pessoa que clone o repositório passa a poder assinar um
+# aplicativo em nome do órgão. Quem já tiver a chave versionada precisa gerar
+# outra, não apenas apagar o arquivo.
+*.jks
+*.keystore
+keystore.properties
 
 # External native build folder generated in Android Studio 2.2 and later
 .externalNativeBuild

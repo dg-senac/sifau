@@ -17,14 +17,16 @@
     "test:marca": "node tests/check-marca.mjs",
     "test:assets": "node tests/check-external-assets.mjs",
     "marca:gerar": "node assets/marca/gerar.mjs",
-    "verify": "npm run typecheck && npm run lint && npm run test:unit && npm run test:marca && npm run test:assets && npm run test:pwa && npm run test:columns && npm run test:sql && npm run test:sql:migrations && npm run test:sql:parity && npm run test:sql:rerun",
+    "verify": "npm run typecheck && npm run lint && npm run test:unit && npm run test:marca && npm run test:assets && npm run test:pwa && npm run test:release && npm run test:columns && npm run test:sql && npm run test:sql:migrations && npm run test:sql:parity && npm run test:sql:rerun",
     "test:sql:rerun": "node tests/apply-twice.mjs",
     "marca:android": "node assets/android/gerar.mjs",
     "pwa:gerar": "node assets/pwa/gerar.mjs",
     "pwa:compilar": "node assets/pwa/compilar.mjs",
     "test:pwa": "node tests/check-pwa.mjs",
     "test:pwa:negativos": "node tests/provar-negativos-pwa.mjs",
-    "test:pwa:dist": "node tests/check-pwa-dist.mjs"
+    "test:pwa:dist": "node tests/check-pwa-dist.mjs",
+    "test:release": "node tests/check-release.mjs",
+    "test:release:negativos": "node tests/check-release.mjs --negativos"
   },
   "dependencies": {
     "@capacitor/core": "^6.1.2",

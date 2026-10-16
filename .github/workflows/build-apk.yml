@@ -1,22 +1,64 @@
-name: Build APK
+name: Gerar APK
+
+# Como este workflow publica:
+#
+#   1. **Etiqueta** (`v1.2.0`) — gera o APK e publica a Release com ele anexado.
+#      É o caminho normal: a etiqueta é o registro de qual código virou qual
+#      versão, e é dela que sai o número da versão.
+#   2. **Manual** (Actions → "Gerar APK" → Run workflow) — para gerar um APK sem
+#      publicar, útil para conferir um ajuste antes de soltar para os fiscais.
+#      A publicação só acontece se você marcar a opção de publicar.
+#
+# Não roda a cada envio para `main` de propósito: publicar uma versão é uma
+# decisão, não um efeito colateral de enviar código. Quem decide é quem cria a
+# etiqueta.
+#
+# Antes de gerar, configure em Settings → Secrets and variables → Actions:
+#   VITE_SUPABASE_URL       (obrigatório)
+#   VITE_SUPABASE_ANON_KEY  (obrigatório — nunca a service_role)
+#   ANDROID_KEYSTORE_BASE64 (opcional; sem ele o APK sai de teste, assinado com
+#                            a chave de depuração, e o próprio run avisa)
+#   ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD
+#   GOOGLE_SERVICES_JSON    (opcional, só para notificação com o app fechado)
 
 on:
   workflow_dispatch:
+    inputs:
+      versao:
+        description: 'Versão do APK (ex.: 1.0.0)'
+        required: true
+        type: string
+      publicar:
+        description: 'Publicar como Release no GitHub?'
+        required: false
+        default: false
+        type: boolean
   push:
-    branches: [main]
+    tags: ['v*']
+
+# Uma publicação por vez: dois builds ao mesmo tempo disputando a mesma etiqueta
+# só geram confusão sobre qual APK é qual.
+concurrency:
+  group: apk-${{ github.ref }}
+  cancel-in-progress: false
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  build:
+  apk:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # 22 é o mínimo, e não é preferência: a construção lê arquivos `.ts`
+          # direto (`src/lib/marca.ts`) para gerar a marca e os arquivos de
+          # instalação, o que depende da remoção de tipos do Node (22.18+). No
+          # Node 20 o build falha com "Unknown file extension .ts".
+          node-version: 22
+          cache: npm
 
       - name: Instalar dependências
         run: npm ci
@@ -26,21 +68,43 @@ jobs:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
         run: |
-          if [ -z "$VITE_SUPABASE_URL" ] || [ -z "$VITE_SUPABASE_ANON_KEY" ]; then
-            echo "Configure os secrets VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY antes de gerar o APK."
+          faltando=""
+          [ -z "$VITE_SUPABASE_URL" ] && faltando="$faltando VITE_SUPABASE_URL"
+          [ -z "$VITE_SUPABASE_ANON_KEY" ] && faltando="$faltando VITE_SUPABASE_ANON_KEY"
+          if [ -n "$faltando" ]; then
+            echo "::error::Faltam segredos no repositório:$faltando"
+            echo "Sem eles o aplicativo é gerado apontando para lugar nenhum — ele abre, mas não entra."
+            echo "Configure em Settings → Secrets and variables → Actions e rode de novo."
             exit 1
           fi
+
+      - name: Definir a versão do aplicativo
+        env:
+          ENTRADA: ${{ inputs.versao }}
+          ETIQUETA: ${{ github.ref_name }}
+        run: |
+          # A etiqueta manda: `v1.2.0` → `1.2.0`. Na execução manual, vale o que
+          # foi digitado.
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            VERSAO="${ETIQUETA#v}"
+          else
+            VERSAO="$ENTRADA"
+          fi
+          node assets/android/versao.mjs "$VERSAO"
+          echo "VERSAO=$VERSAO" >> "$GITHUB_ENV"
 
       - name: Build do app web
         run: npm run build
         env:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+          # Dentro do aplicativo instalado o endereço interno é `http://localhost`,
+          # então o link de recuperação de senha precisa do endereço público.
+          # Vazio é aceitável: a tela de recuperação avisa que falta configurar
+          # em vez de mandar um e-mail que não leva a lugar nenhum.
+          VITE_APP_URL: ${{ vars.VITE_APP_URL }}
 
-      - name: Adicionar plataforma Android (se ainda não existir)
-        run: npx cap add android || npx cap sync android
-
-      - name: Sincronizar Capacitor
+      - name: Sincronizar com o Android
         run: npx cap sync android
 
       - name: Configurar Firebase (opcional)
@@ -49,8 +113,9 @@ jobs:
         run: |
           if [ -n "$GOOGLE_SERVICES_JSON_BASE64" ]; then
             printf '%s' "$GOOGLE_SERVICES_JSON_BASE64" | base64 --decode > android/app/google-services.json
+            echo "Firebase configurado: o aplicativo recebe notificação com ele fechado."
           else
-            echo "GOOGLE_SERVICES_JSON não configurado; o APK será gerado sem push nativo."
+            echo "GOOGLE_SERVICES_JSON não configurado; o aplicativo sai sem notificação com ele fechado."
           fi
 
       - uses: actions/setup-java@v5
@@ -58,12 +123,160 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      - name: Gerar APK de debug
-        working-directory: android
-        run: ./gradlew assembleDebug
+      - name: Preparar a chave de assinatura
+        id: chave
+        env:
+          CHAVE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          SENHA_COFRE: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          APELIDO: ${{ secrets.ANDROID_KEY_ALIAS }}
+          SENHA_CHAVE: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -z "$CHAVE_BASE64" ] || [ -z "$SENHA_COFRE" ] || [ -z "$APELIDO" ] || [ -z "$SENHA_CHAVE" ]; then
+            echo "sem_chave=true" >> "$GITHUB_OUTPUT"
+            echo "::warning::Sem a chave de assinatura: o APK sai de TESTE (assinado com a chave de depuração). Serve para conferir o aplicativo, não para distribuir."
+            exit 0
+          fi
+          printf '%s' "$CHAVE_BASE64" | base64 --decode > android/sifau-release.jks
+          # O caminho é absoluto de propósito: o Gradle resolve caminho relativo
+          # a partir da pasta do módulo (android/app), e um caminho relativo
+          # apontaria para o lugar errado na hora de assinar.
+          #
+          # `printf` em vez de heredoc: heredoc dentro de YAML carrega a
+          # indentação do bloco para dentro do arquivo, e um arquivo de
+          # propriedades com espaços à esquerda é uma armadilha que só se
+          # manifesta no dia em que a assinatura falhar.
+          printf 'storeFile=%s\nstorePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n' \
+            "$(pwd)/android/sifau-release.jks" "$SENHA_COFRE" "$APELIDO" "$SENHA_CHAVE" \
+            > android/keystore.properties
+          echo "sem_chave=false" >> "$GITHUB_OUTPUT"
+          echo "Chave de assinatura preparada."
 
-      - name: Publicar APK
+      - name: Gerar APK
+        working-directory: android
+        run: |
+          if [ "${{ steps.chave.outputs.sem_chave }}" = "false" ]; then
+            ./gradlew --no-daemon assembleRelease
+          else
+            ./gradlew --no-daemon assembleDebug
+          fi
+
+      - name: Preparar o APK e conferir o que saiu
+        id: apk
+        env:
+          VERSAO: ${{ env.VERSAO }}
+        run: |
+          if [ "${{ steps.chave.outputs.sem_chave }}" = "false" ]; then
+            TIPO=release
+            ORIGEM=android/app/build/outputs/apk/release/app-release.apk
+          else
+            TIPO=debug
+            ORIGEM=android/app/build/outputs/apk/debug/app-debug.apk
+          fi
+          if [ ! -f "$ORIGEM" ]; then
+            echo "::error::O Gradle terminou sem gerar o APK esperado ($ORIGEM)."
+            exit 1
+          fi
+          DESTINO="sifau-${VERSAO}-${TIPO}.apk"
+          cp "$ORIGEM" "$DESTINO"
+
+          # Conferência dentro do arquivo, não no nome dele: o `aapt2` (que vem
+          # com o Android SDK do runner) abre o APK gerado e lê o que está lá
+          # dentro. É o que impede publicar um APK chamado 1.2.0 no nome e 1.0.0
+          # por dentro — o caso clássico do arquivo certo com número errado, que
+          # só aparece quando alguém tenta atualizar e o aparelho recusa a
+          # instalação sem explicar por quê.
+          AAPT=$(ls "$ANDROID_HOME"/build-tools/*/aapt2 2>/dev/null | sort -V | tail -1)
+          if [ -z "$AAPT" ]; then
+            echo "::error::Não encontrei o aapt2 no SDK do runner para conferir o APK."
+            exit 1
+          fi
+          INFO=$("$AAPT" dump badging "$DESTINO")
+          NOME_NO_APK=$(printf '%s' "$INFO" | sed -n "s/.*versionName='\([^']*\)'.*/\1/p" | head -1)
+          CODIGO_NO_APK=$(printf '%s' "$INFO" | sed -n "s/.*versionCode='\([0-9]*\)'.*/\1/p" | head -1)
+          PACOTE_NO_APK=$(printf '%s' "$INFO" | sed -n "s/package: name='\([^']*\)'.*/\1/p" | head -1)
+          CODIGO_ESPERADO=$(node assets/android/versao.mjs --codigo "$VERSAO")
+
+          echo "APK gerado: pacote=$PACOTE_NO_APK versão=$NOME_NO_APK (código $CODIGO_NO_APK)"
+          [ "$PACOTE_NO_APK" = "br.recife.sifau" ] || { echo "::error::O APK é de outro aplicativo ($PACOTE_NO_APK)."; exit 1; }
+          [ "$NOME_NO_APK" = "$VERSAO" ] || { echo "::error::O APK diz versão $NOME_NO_APK, e foi pedido $VERSAO."; exit 1; }
+          [ "$CODIGO_NO_APK" = "$CODIGO_ESPERADO" ] || { echo "::error::versionCode dentro do APK é $CODIGO_NO_APK, e devia ser $CODIGO_ESPERADO — uma atualização por cima seria recusada."; exit 1; }
+
+          echo "TIPO=$TIPO" >> "$GITHUB_ENV"
+          echo "ARQUIVO=$DESTINO" >> "$GITHUB_ENV"
+          sha256sum "$DESTINO" | tee "$DESTINO.sha256"
+          echo "### APK gerado: $DESTINO" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- versão declarada: **$VERSAO**" >> "$GITHUB_STEP_SUMMARY"
+          echo "- assinatura: **$([ "$TIPO" = release ] && echo 'chave de publicação' || echo 'chave de teste (debug)')**" >> "$GITHUB_STEP_SUMMARY"
+          echo "- tamanho: $(du -h "$DESTINO" | cut -f1)" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Guardar o APK (sempre)
         uses: actions/upload-artifact@v4
         with:
-          name: sifau-debug-apk
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          name: sifau-${{ env.VERSAO }}
+          path: |
+            sifau-*.apk
+            sifau-*.apk.sha256
+          if-no-files-found: error
+
+      - name: Publicar a Release
+        if: github.ref_type == 'tag' || inputs.publicar
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSAO: ${{ env.VERSAO }}
+          ARQUIVO: ${{ env.ARQUIVO }}
+          TIPO: ${{ env.TIPO }}
+        run: |
+          ETIQUETA="v${VERSAO}"
+          if [ "$TIPO" = "release" ]; then
+            ASSINATURA="Este APK está assinado com a chave de publicação do SIFAU."
+            AVISO=""
+          else
+            ASSINATURA="**Este APK está assinado com a chave de teste (debug).** Serve para conferir o aplicativo; para distribuir aos fiscais, configure a chave de assinatura nos segredos do repositório."
+            AVISO="- Um aplicativo assinado com a chave de teste **não pode ser atualizado** por um assinado com a chave de publicação: quem instalar este teria de desinstalar antes. Não entregue este arquivo a fiscal em produção."
+          fi
+          cat > notas.md <<NOTAS
+          ## SIFAU $VERSAO — aplicativo para Android
+
+          Baixe o arquivo \`$ARQUIVO\` abaixo e instale no aparelho.
+
+          ### Como instalar
+          1. Baixe o APK no celular.
+          2. Ao abrir, o Android avisa que a origem é desconhecida: permita a instalação
+             para o aplicativo de onde você baixou (navegador ou gerenciador de arquivos).
+          3. Abra o SIFAU e entre com o e-mail e a senha cadastrados.
+
+          $ASSINATURA
+
+          ### Conferir o arquivo baixado (opcional)
+          O arquivo \`$ARQUIVO.sha256\` traz a impressão digital do APK. No computador,
+          rode \`sha256sum $ARQUIVO\` e compare: se for igual, o arquivo chegou inteiro.
+
+          ### O que mudou
+          Veja o histórico em https://github.com/${{ github.repository }}/commits/$ETIQUETA
+
+          $AVISO
+          NOTAS
+          if gh release view "$ETIQUETA" >/dev/null 2>&1; then
+            # Já existe: acrescenta o APK novo e troca o texto. Acontece quando
+            # alguém refaz a publicação da mesma versão — o que é comum depois
+            # de um ajuste pequeno, e é melhor que deixar dois arquivos com o
+            # mesmo número em lugares diferentes.
+            gh release upload "$ETIQUETA" "$ARQUIVO" "$ARQUIVO.sha256" --clobber
+            gh release edit "$ETIQUETA" --notes-file notas.md
+            echo "Release $ETIQUETA atualizada."
+          elif git rev-parse "$ETIQUETA" >/dev/null 2>&1; then
+            # Etiqueta já existe no repositório (veio de um envio de etiqueta):
+            # a Release aponta para ela, sem criar nada.
+            gh release create "$ETIQUETA" "$ARQUIVO" "$ARQUIVO.sha256" \
+              --title "SIFAU $VERSAO" \
+              --notes-file notas.md
+            echo "Release $ETIQUETA publicada."
+          else
+            # Execução manual: a etiqueta é criada agora, no commit que gerou o APK.
+            gh release create "$ETIQUETA" "$ARQUIVO" "$ARQUIVO.sha256" \
+              --title "SIFAU $VERSAO" \
+              --notes-file notas.md \
+              --target "$GITHUB_SHA"
+            echo "Release $ETIQUETA publicada."
+          fi

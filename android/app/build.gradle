@@ -1,5 +1,28 @@
 apply plugin: 'com.android.application'
 
+// ── Assinatura do aplicativo ────────────────────────────────────────────────
+// O Android só instala aplicativo assinado. O de teste (debug) é assinado com
+// uma chave que existe no próprio computador de quem compila, e serve para
+// testar — não para distribuir: ela vale 30 anos, é pública, e qualquer um pode
+// assinar outro aplicativo com o mesmo nome.
+//
+// Para valer como aplicativo do órgão, é preciso a chave de release, que fica
+// FORA do repositório (nunca entra no Git): o arquivo `android/keystore.properties`
+// aponta para ela, e o GitHub Actions o recria a partir de segredos do
+// repositório.
+//
+//   Android: se o aparelho já tem o aplicativo instalado assinado com chave
+//   diferente, a instalação é recusada com "aplicativo não instalado" — e não há
+//   como converter depois. Por isso a chave de release precisa existir ANTES de
+//   o aplicativo chegar na mão de fiscal, e precisa ser guardada em cofre: se
+//   for perdida, não existe forma de publicar atualização para quem já instalou.
+def keystoreProperties = new Properties()
+def keystorePropertiesFile = rootProject.file('keystore.properties')
+def temChaveDeRelease = keystorePropertiesFile.exists()
+if (temChaveDeRelease) {
+    keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
+}
+
 android {
     namespace "br.recife.sifau"
     compileSdk rootProject.ext.compileSdkVersion
@@ -7,6 +30,9 @@ android {
         applicationId "br.recife.sifau"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
+        // Estes dois números são controlados por `node assets/android/versao.mjs`,
+        // nunca à mão: o `versionCode` só pode crescer, e é ele que decide se o
+        // aparelho aceita a atualização por cima ou recusa a instalação.
         versionCode 1
         versionName "1.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
@@ -16,10 +42,26 @@ android {
             ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    signingConfigs {
+        release {
+            if (temChaveDeRelease) {
+                storeFile file(keystoreProperties['storeFile'])
+                storePassword keystoreProperties['storePassword']
+                keyAlias keystoreProperties['keyAlias']
+                keyPassword keystoreProperties['keyPassword']
+            }
+        }
+    }
     buildTypes {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            // Sem a chave, o APK de release sai SEM assinatura — e um APK sem
+            // assinatura não instala em aparelho nenhum. Neste caso o build de
+            // publicação usa o APK de teste, e o GitHub avisa na Release.
+            if (temChaveDeRelease) {
+                signingConfig signingConfigs.release
+            }
         }
     }
 }
