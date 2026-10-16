@@ -6,6 +6,7 @@ import { AppShell, LoadingScreen } from '@/components/AppShell';
 import { useSession } from '@/lib/useSession';
 import { signOut } from '@/lib/authActions';
 import { AuthScreen } from '@/screens/AuthScreen';
+import { NovaSenhaScreen } from '@/screens/NovaSenhaScreen';
 import { HomeScreen } from '@/screens/HomeScreen';
 import { NewOccurrence } from '@/screens/NewOccurrence';
 import { Inspection } from '@/screens/Inspection';
@@ -36,7 +37,7 @@ const navItems: { id: Screen; label: string; icon: typeof HomeIcon }[] = [
 type AccessState = 'idle' | 'checking' | 'allowed' | 'pending' | 'banned' | 'error';
 
 function App() {
-  const { session, loading } = useSession();
+  const { session, loading, recuperacao, encerrarRecuperacao } = useSession();
   const [screen, setScreen] = useState<Screen>('home');
   const [fiscal, setFiscal] = useState<Fiscal | null>(null);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -257,6 +258,20 @@ function App() {
   }
 
   if (loading) return <LoadingScreen message="Carregando SIFAU" />;
+
+  // O link de recuperação abre uma sessão ANTES de o fiscal definir a senha.
+  // Por isso esta tela vem antes da checagem de sessão: sem isso, abrir o link
+  // levaria direto para dentro do aplicativo, com a senha ainda valendo a antiga.
+  if (recuperacao.situacao !== 'nenhuma') {
+    return (
+      <NovaSenhaScreen
+        problema={recuperacao.situacao === 'erro' ? recuperacao.mensagem : null}
+        email={session?.user.email ?? null}
+        onConcluir={encerrarRecuperacao}
+      />
+    );
+  }
+
   if (!session) return <AuthScreen />;
   if (accessState === 'checking' || accessState === 'idle') return <LoadingScreen message="Verificando permissões" />;
   if (accessState === 'pending' || accessState === 'banned' || accessState === 'error') {

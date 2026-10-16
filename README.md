@@ -124,6 +124,7 @@ base64 não é uma decisão que passe despercebida.
 ## Segurança e operação
 
 - Sessões e perfis são verificados pelo servidor; contas pendentes ou banidas não acessam as tabelas operacionais.
+- **Senhas:** o fiscal recupera o acesso sozinho ("Esqueci minha senha") e troca a senha no perfil. A troca exige a senha atual, e depois dela as outras sessões são encerradas. O link do e-mail cria uma sessão antes de a senha mudar — por isso o app mostra a tela de definir senha **antes** de deixar entrar. Para o link funcionar, o endereço do app precisa estar em *Additional Redirect URLs* no painel do Supabase e em `VITE_APP_URL` (ver `supabase/ROTEIRO_APLICACAO.md`, etapa 5).
 - Dados offline ficam no `localStorage` do aparelho, separados por usuário, e são enviados quando a conexão retorna. Em aparelho compartilhado, encerre a sessão e proteja o dispositivo.
 - A localização é enviada enquanto o fiscal está com o app aberto e ativo. Informe essa coleta na política de privacidade da organização.
 - Push nativo é opcional e exige Firebase Cloud Messaging HTTP v1, Supabase Edge Function e webhook privado. Veja [`GUIA_NOVAS_FUNCIONALIDADES.md`](GUIA_NOVAS_FUNCIONALIDADES.md).

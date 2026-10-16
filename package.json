@@ -13,7 +13,8 @@
     "test:sql:migrations": "node tests/run.mjs --source=migrations",
     "test:sql:parity": "node tests/compare-install-paths.mjs",
     "test:columns": "node tests/check-query-columns.mjs",
-    "verify": "npm run typecheck && npm run lint && npm run test:columns && npm run test:sql && npm run test:sql:migrations && npm run test:sql:parity && npm run test:sql:rerun",
+    "test:unit": "node --test tests/unit/*.test.mjs",
+    "verify": "npm run typecheck && npm run lint && npm run test:unit && npm run test:columns && npm run test:sql && npm run test:sql:migrations && npm run test:sql:parity && npm run test:sql:rerun",
     "test:sql:rerun": "node tests/apply-twice.mjs"
   },
   "dependencies": {

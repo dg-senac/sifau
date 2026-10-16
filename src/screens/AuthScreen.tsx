@@ -1,82 +1,11 @@
 import { FormEvent, useState } from 'react';
-import { AlertTriangle, Loader2, ShieldCheck } from 'lucide-react';
+import { AlertTriangle, Loader2, MailCheck, ShieldCheck } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
-
-type AuthErrorDetails = {
-  code?: string;
-  message?: string;
-  name?: string;
-  status?: number;
-};
-
-function logAuthError(operation: string, error: unknown, sensitiveValues: string[]) {
-  if (!import.meta.env.DEV) return;
-
-  const details = (typeof error === 'object' && error !== null ? error : {}) as AuthErrorDetails;
-  let message = details.message ?? String(error);
-  for (const value of sensitiveValues) {
-    if (value) message = message.split(value).join('[redigido]');
-  }
-  console.error(`[SIFAU] Falha em ${operation}`, {
-    code: details.code,
-    message,
-    name: details.name,
-    status: details.status,
-  });
-}
-
-function getAuthErrorMessage(error: AuthErrorDetails) {
-  const message = `${error.code ?? ''} ${error.message ?? ''}`.toLowerCase();
-
-  if (
-    message.includes('invalid email') ||
-    message.includes('email address is invalid') ||
-    message.includes('unable to validate email') ||
-    message.includes('email_invalid')
-  ) {
-    return 'Informe um endereço de e-mail válido.';
-  }
-  if (
-    message.includes('weak password') ||
-    message.includes('password should be at least') ||
-    message.includes('password must be at least') ||
-    message.includes('password is too short') ||
-    message.includes('password_not_strong_enough')
-  ) {
-    return 'A senha não atende aos requisitos de segurança. Escolha uma senha mais forte.';
-  }
-  if (
-    message.includes('already registered') ||
-    message.includes('already been registered') ||
-    message.includes('user_already_exists') ||
-    message.includes('email_exists')
-  ) {
-    return 'Este e-mail já está cadastrado.';
-  }
-  if (message.includes('invalid login credentials')) {
-    return 'E-mail ou senha inválidos.';
-  }
-  if (error.status === 429) {
-    return 'Muitas tentativas. Aguarde um pouco e tente novamente.';
-  }
-  if (
-    error.status === 401 ||
-    error.status === 403 ||
-    error.status === 404 ||
-    message.includes('invalid api key') ||
-    message.includes('signup is disabled')
-  ) {
-    return 'Não foi possível conectar à autenticação do SIFAU. Verifique a configuração do Supabase.';
-  }
-  if (message.includes('fetch') || message.includes('network') || error.status === 0) {
-    return 'Falha de conexão. Verifique sua internet e tente novamente.';
-  }
-
-  return 'Não foi possível concluir a solicitação. Tente novamente.';
-}
+import { getAuthErrorMessage, logAuthError, solicitarRecuperacaoDeSenha, type ErroDeAuth } from '@/lib/authActions';
+import { TAMANHO_MINIMO_DA_SENHA } from '@/lib/recuperacaoDeSenha';
 
 export function AuthScreen() {
-  const [mode, setMode] = useState<'login' | 'signup'>('login');
+  const [mode, setMode] = useState<'login' | 'signup' | 'recuperar'>('login');
   const [form, setForm] = useState({
     nome: '',
     email: '',
@@ -87,6 +16,7 @@ export function AuthScreen() {
   });
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
+  const [enviadoPara, setEnviadoPara] = useState('');
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -95,6 +25,21 @@ export function AuthScreen() {
     const email = form.email.trim().toLowerCase();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       setMessage('Informe um endereço de e-mail válido.');
+      return;
+    }
+    if (mode === 'recuperar') {
+      setBusy(true);
+      const { error } = await solicitarRecuperacaoDeSenha(email);
+      setBusy(false);
+      if (error) {
+        setMessage(
+          error.code === 'recovery_url_not_configured'
+            ? 'A recuperação por e-mail ainda não está configurada neste aplicativo (falta o endereço público do app). Peça para a administração redefinir sua senha.'
+            : getAuthErrorMessage(error),
+        );
+        return;
+      }
+      setEnviadoPara(email);
       return;
     }
     if (!form.senha) {
@@ -106,8 +51,8 @@ export function AuthScreen() {
         setMessage('Preencha nome, telefone e bairro/região.');
         return;
       }
-      if (form.senha.length < 12) {
-        setMessage('A senha precisa ter pelo menos 12 caracteres.');
+      if (form.senha.length < TAMANHO_MINIMO_DA_SENHA) {
+        setMessage(`A senha precisa ter pelo menos ${TAMANHO_MINIMO_DA_SENHA} caracteres.`);
         return;
       }
     }
@@ -151,7 +96,7 @@ export function AuthScreen() {
       }
     } catch (error) {
       logAuthError(mode === 'login' ? 'login' : 'cadastro', error, [email, form.senha]);
-      setMessage(getAuthErrorMessage(error as AuthErrorDetails));
+      setMessage(getAuthErrorMessage(error as ErroDeAuth));
     } finally {
       setBusy(false);
     }
@@ -167,23 +112,31 @@ export function AuthScreen() {
         <p>Fiscalização urbana inteligente</p>
       </div>
       <div className="auth-card">
-        <div className="auth-tabs">
-          <button
-            className={mode === 'login' ? 'selected' : ''}
-            onClick={() => setMode('login')}
-          >
-            Entrar
-          </button>
-          <button
-            className={mode === 'signup' ? 'selected' : ''}
-            onClick={() => setMode('signup')}
-          >
-            Criar cadastro
-          </button>
-        </div>
-        <h2>{mode === 'login' ? 'Bem-vindo de volta' : 'Cadastro de fiscal'}</h2>
+        {mode !== 'recuperar' && (
+          <div className="auth-tabs">
+            <button
+              className={mode === 'login' ? 'selected' : ''}
+              onClick={() => setMode('login')}
+            >
+              Entrar
+            </button>
+            <button
+              className={mode === 'signup' ? 'selected' : ''}
+              onClick={() => setMode('signup')}
+            >
+              Criar cadastro
+            </button>
+          </div>
+        )}
+        <h2>
+          {mode === 'login' && 'Bem-vindo de volta'}
+          {mode === 'signup' && 'Cadastro de fiscal'}
+          {mode === 'recuperar' && 'Recuperar acesso'}
+        </h2>
         <p className="muted">
-          {mode === 'login' ? 'Acesse sua central de fiscalização.' : 'Preencha seus dados para começar.'}
+          {mode === 'login' && 'Acesse sua central de fiscalização.'}
+          {mode === 'signup' && 'Preencha seus dados para começar.'}
+          {mode === 'recuperar' && 'Informe o e-mail do seu cadastro: enviamos um link para você definir uma senha nova.'}
         </p>
         <form onSubmit={submit}>
           {mode === 'signup' && (
@@ -237,26 +190,71 @@ export function AuthScreen() {
               placeholder="fiscal@prefeitura.gov.br"
             />
           </label>
-          <label>
-            Senha
-            <input
-              required
-              type="password"
-              value={form.senha}
-              onChange={(e) => setForm({ ...form, senha: e.target.value })}
-              placeholder="Sua senha"
-            />
-          </label>
+          {mode !== 'recuperar' && (
+            <label>
+              Senha
+              <input
+                required
+                type="password"
+                value={form.senha}
+                onChange={(e) => setForm({ ...form, senha: e.target.value })}
+                placeholder="Sua senha"
+              />
+            </label>
+          )}
           {message && (
             <div className="form-message">
               <AlertTriangle size={16} />
               {message}
             </div>
           )}
+          {enviadoPara && mode === 'recuperar' && (
+            <div className="info-message">
+              <MailCheck size={16} />
+              <span>
+                Se existir uma conta com <b>{enviadoPara}</b>, o link de recuperação chegou.
+                Ele vale por 1 hora — confira também a caixa de spam.
+              </span>
+            </div>
+          )}
           <button className="primary-button full" disabled={busy}>
-            {busy ? <Loader2 className="spin" size={18} /> : mode === 'login' ? 'Entrar no SIFAU' : 'Criar acesso'}
+            {busy ? (
+              <Loader2 className="spin" size={18} />
+            ) : mode === 'login' ? (
+              'Entrar no SIFAU'
+            ) : mode === 'signup' ? (
+              'Criar acesso'
+            ) : (
+              'Enviar link de recuperação'
+            )}
           </button>
         </form>
+        {mode === 'login' && (
+          <button
+            className="link-button full"
+            type="button"
+            onClick={() => {
+              setMessage('');
+              setEnviadoPara('');
+              setMode('recuperar');
+            }}
+          >
+            Esqueci minha senha
+          </button>
+        )}
+        {mode === 'recuperar' && (
+          <button
+            className="link-button full"
+            type="button"
+            onClick={() => {
+              setMessage('');
+              setEnviadoPara('');
+              setMode('login');
+            }}
+          >
+            Voltar para o login
+          </button>
+        )}
       </div>
       <small className="auth-footer">Acesso restrito a fiscais municipais</small>
     </div>

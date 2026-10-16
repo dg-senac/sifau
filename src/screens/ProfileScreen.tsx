@@ -1,7 +1,8 @@
 import { FormEvent, useEffect, useState } from 'react';
-import { BadgeCheck, Bell, LogOut, Save, ShieldCheck } from 'lucide-react';
+import { BadgeCheck, Bell, CheckCircle2, KeyRound, LogOut, Save, ShieldCheck } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
-import { signOut } from '@/lib/authActions';
+import { getAuthErrorMessage, signOut, trocarSenhaComSenhaAtual } from '@/lib/authActions';
+import { TAMANHO_MINIMO_DA_SENHA, validarNovaSenha } from '@/lib/recuperacaoDeSenha';
 import { Fiscal } from '@/lib/types';
 import { PageTitle } from '@/components/ui';
 
@@ -15,6 +16,12 @@ export function ProfileScreen({ fiscal, onUpdated }: { fiscal: Fiscal | null; on
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
   const [saved, setSaved] = useState(false);
+  const [senhaAtual, setSenhaAtual] = useState('');
+  const [novaSenha, setNovaSenha] = useState('');
+  const [confirmacaoDaSenha, setConfirmacaoDaSenha] = useState('');
+  const [erroDeSenha, setErroDeSenha] = useState('');
+  const [senhaTrocada, setSenhaTrocada] = useState(false);
+  const [trocandoSenha, setTrocandoSenha] = useState(false);
 
   useEffect(() => {
     setNome(fiscal?.nome ?? '');
@@ -56,6 +63,51 @@ export function ProfileScreen({ fiscal, onUpdated }: { fiscal: Fiscal | null; on
     }
     setSaved(true);
     onUpdated();
+  };
+
+  const trocarSenha = async (event: FormEvent) => {
+    event.preventDefault();
+    setErroDeSenha('');
+    setSenhaTrocada(false);
+
+    if (!fiscal?.email) {
+      setErroDeSenha('Não foi possível identificar seu e-mail. Entre novamente.');
+      return;
+    }
+    if (!senhaAtual) {
+      setErroDeSenha('Informe a senha atual.');
+      return;
+    }
+
+    const problema = validarNovaSenha({
+      senha: novaSenha,
+      confirmacao: confirmacaoDaSenha,
+      senhaAtual,
+    });
+    if (problema) {
+      setErroDeSenha(problema);
+      return;
+    }
+
+    setTrocandoSenha(true);
+    const { error, senhaAtualIncorreta } = await trocarSenhaComSenhaAtual({
+      email: fiscal.email,
+      senhaAtual,
+      novaSenha,
+    });
+    setTrocandoSenha(false);
+
+    if (error) {
+      setErroDeSenha(
+        senhaAtualIncorreta ? 'Senha atual incorreta.' : getAuthErrorMessage(error),
+      );
+      return;
+    }
+
+    setSenhaAtual('');
+    setNovaSenha('');
+    setConfirmacaoDaSenha('');
+    setSenhaTrocada(true);
   };
 
   return (
@@ -127,6 +179,62 @@ export function ProfileScreen({ fiscal, onUpdated }: { fiscal: Fiscal | null; on
 
         <button className="primary-button full" disabled={saving || !fiscal} type="submit">
           <Save size={17} /> {saving ? 'Salvando...' : 'Salvar alterações'}
+        </button>
+      </form>
+
+      <form className="form-card compact" onSubmit={trocarSenha}>
+        <div className="form-section">
+          <h2>Trocar senha</h2>
+          <p className="muted">
+            A troca pede a senha atual: aparelho emprestado com sessão aberta não basta para
+            tomar a conta. Ao trocar, os outros aparelhos conectados precisam entrar de novo.
+          </p>
+        </div>
+        <div className="form-section">
+          <label>
+            Senha atual
+            <input
+              type="password"
+              autoComplete="current-password"
+              value={senhaAtual}
+              onChange={(event) => setSenhaAtual(event.target.value)}
+              placeholder="A senha que você usa hoje"
+            />
+          </label>
+          <div className="two-fields">
+            <label>
+              Nova senha
+              <input
+                type="password"
+                autoComplete="new-password"
+                value={novaSenha}
+                onChange={(event) => setNovaSenha(event.target.value)}
+                placeholder={`${TAMANHO_MINIMO_DA_SENHA}+ caracteres`}
+              />
+            </label>
+            <label>
+              Repita a nova
+              <input
+                type="password"
+                autoComplete="new-password"
+                value={confirmacaoDaSenha}
+                onChange={(event) => setConfirmacaoDaSenha(event.target.value)}
+                placeholder="Igual à da esquerda"
+              />
+            </label>
+          </div>
+        </div>
+
+        {erroDeSenha && <div className="form-message" role="alert">{erroDeSenha}</div>}
+        {senhaTrocada && (
+          <div className="info-message">
+            <CheckCircle2 size={15} />
+            Senha alterada. Os outros aparelhos precisarão entrar de novo.
+          </div>
+        )}
+
+        <button className="primary-button full" disabled={trocandoSenha || !fiscal} type="submit">
+          <KeyRound size={17} /> {trocandoSenha ? 'Trocando...' : 'Trocar senha'}
         </button>
       </form>
 

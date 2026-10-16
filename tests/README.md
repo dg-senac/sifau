@@ -16,6 +16,8 @@ impede que voltem.
 ```bash
 npm run test:sql              # testa supabase/SETUP_COMPLETO.sql (projeto novo)
 npm run test:sql:migrations   # testa supabase/migrations/*.sql em ordem (projeto existente)
+npm run test:unit             # funções puras do app (sem navegador, sem Supabase)
+npm run verify                # tudo em sequência, com tipo, lint e build
 ```
 
 Sem dependências externas além do `npm install`: não precisa de Docker, de servidor
@@ -47,6 +49,7 @@ tests/
 ├── apply-twice.mjs        # o script é re-executável? (aplicar duas vezes não muda nada)
 ├── check-query-columns.mjs   # nenhuma tela pede `select('*')` em tabela de arquivo
 ├── run.mjs                # runner e mini framework de teste
+├── unit/                  # testes de função pura do app (Node, sem banco)
 └── suites/
     ├── 01-acesso.test.mjs            # RLS, papéis, negação de acesso
     ├── 02-administracao.test.mjs     # bootstrap, aprovação, triagem, redistribuição

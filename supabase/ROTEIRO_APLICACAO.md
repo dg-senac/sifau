@@ -105,6 +105,26 @@ ocorrência — era exatamente o bug B2.
 
 ---
 
+## Etapa 5 — e-mail de recuperação de senha (2 minutos no painel)
+
+O aplicativo já tem "Esqueci minha senha", mas o link do e-mail precisa de dois ajustes
+que **só existem no painel** (não é SQL):
+
+1. **Authentication → URL Configuration → Site URL**: coloque o endereço público do
+   aplicativo (quando ele estiver no ar). Enquanto estiver testando, deixe o endereço de
+   desenvolvimento.
+2. Ainda nessa tela, em **Additional Redirect URLs**, acrescente o mesmo endereço. Sem
+   isso o Supabase recusa o retorno do link (`redirect not allowed`).
+3. No `.env` do aplicativo, preencha `VITE_APP_URL` com esse endereço. Motivo: dentro do
+   aplicativo instalado no telefone o endereço interno é `http://localhost`, então sem
+   esta variável o link do e-mail mandaria o fiscal para uma página em branco.
+
+> Enquanto `VITE_APP_URL` não estiver preenchida, a tela de recuperação avisa que falta
+> configurar — e **não** envia o e-mail. É de propósito: e-mail que não leva a lugar
+> nenhum é pior que aviso de configuração faltando.
+
+---
+
 ## Conferência — cole o resultado disto de volta
 
 ```sql

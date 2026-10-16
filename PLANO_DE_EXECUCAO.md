@@ -124,10 +124,18 @@ Aqui é onde os dois bugs de SQL morrem **por construção**, em vez de remendo.
 
 ## FASE E — Fechar lacunas de produto
 
-### ⬜ Passo 11 — Recuperação e troca de senha
-- **O que muda:** tela "Esqueci minha senha" (`resetPasswordForEmail`) + fluxo de redefinição + troca de senha no perfil.
-- **Resolve:** hoje um fiscal que esquece a senha fica **trancado para fora** sem autoatendimento, e não há como trocar senha comprometida. **Maior valor pelo menor esforço de todo o plano.**
-- **Verificação:** fluxo completo com e-mail real.
+### ✅ Passo 11 — Recuperação e troca de senha
+- **O que muda:** "Esqueci minha senha" na tela de entrada, tela de definir a senha nova (aberta pelo link do e-mail) e "Trocar senha" no perfil.
+- **Resolve:** até aqui, fiscal que esquecia a senha ficava **trancado para fora** sem autoatendimento, e não havia como trocar uma senha comprometida. Era o maior valor pelo menor esforço do plano.
+- **Resultado:** os três fluxos existem. O que vale registrar são as decisões que não são óbvias:
+  1. **A tela de senha nova vem ANTES da checagem de sessão.** O link de recuperação cria uma sessão válida antes de o fiscal definir a senha — o caminho "natural" (checar sessão e entrar) levaria a pessoa direto para dentro do app com a senha antiga ainda valendo. É o defeito clássico desse fluxo.
+  2. **A troca de senha dentro do app pede a senha atual.** O Supabase aceitaria trocar só com a sessão; pedir a senha de novo é o que impede que aparelho emprestado com sessão aberta tome a conta. Depois de trocar, as OUTRAS sessões são encerradas.
+  3. **O motivo da recusa do link aparece em português.** O Supabase devolve `#error=access_denied&error_code=otp_expired` em inglês; sem traduzir e sem mostrar, o fiscal fica olhando a tela de login sem entender que o link venceu — e pede ajuda.
+  4. **O token sai do endereço depois de lido.** Token de acesso parado na barra de endereço fica no histórico do navegador, no print que alguém tira e no link que alguém copia.
+  5. **`VITE_APP_URL` existe por um motivo concreto:** dentro do aplicativo instalado, o endereço é `http://localhost` — um link de e-mail apontando para lá não abre nada no telefone. Sem essa variável, a tela avisa que falta configurar em vez de mandar um e-mail inútil.
+- **Verificação:** 10 testes de unidade novos (`npm run test:unit`, roda sem navegador e sem Supabase) sobre a leitura do link — recuperação, link vencido, token no `#` ou no `?`, limpeza do endereço e as regras da senha. E o fluxo inteiro precisa do seu teste com e-mail real (passo a passo abaixo).
+- **Para você testar (5 minutos):** entre pelo app → "Esqueci minha senha" → informe o e-mail do administrador → receba o link → abra: o app deve pedir a **nova senha** (não deve entrar direto) → defina → entre com a nova. Depois, no perfil, troque a senha de novo, errando a senha atual de propósito para ver a recusa.
+- **O que falta para funcionar no aplicativo instalado:** cadastrar o endereço público do app no painel do Supabase (Authentication → URL Configuration → *Additional Redirect URLs*) e preencher `VITE_APP_URL`. Está na etapa 5 do `ROTEIRO_APLICACAO.md`.
 
 ### ⬜ Passo 12 — CI de verdade
 - **O que muda:** job que roda `typecheck` + `lint` + `build` + o harness de SQL em cada push.
