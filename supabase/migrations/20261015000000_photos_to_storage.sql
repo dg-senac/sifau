@@ -49,10 +49,18 @@ VALUES (
     'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
   ]
 )
-ON CONFLICT (id) DO UPDATE SET
-  public = EXCLUDED.public,
-  file_size_limit = EXCLUDED.file_size_limit,
-  allowed_mime_types = EXCLUDED.allowed_mime_types;
+-- `DO NOTHING` de propósito, e não `DO UPDATE`.
+--
+-- O SQL Editor executa o script inteiro como UMA transação: se um único
+-- comando falhar por falta de privilégio, a instalação inteira é desfeita.
+-- O papel do SQL Editor tem INSERT em `storage.buckets` (é o caminho que a
+-- própria Supabase documenta para criar bucket por SQL), mas UPDATE em uma
+-- tabela do serviço de Storage não é garantido em todo projeto.
+--
+-- Então: se o bucket não existe, ele é criado com os valores certos; se já
+-- existe, o script não briga com ele. O roteiro de aplicação tem uma consulta
+-- que confere `public = false`, que é a única configuração que importa aqui.
+ON CONFLICT (id) DO NOTHING;
 
 -- Convenção do caminho: {fiscal_id}/{ano}/{mes}/{anexo_id}.{ext}
 --

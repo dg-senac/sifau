@@ -50,6 +50,11 @@ para listar o que ficou sobrando.
 4. Deve terminar com **Success. No rows returned**. Avisos do tipo `NOTICE: Política
    permissiva removida...` são esperados e são o script limpando o scaffold antigo.
 
+> O script já cria o **bucket privado das fotos** (`sifau-anexos`) e as políticas de
+> acesso a ele. Não é preciso criar bucket pelo painel do Storage, e não vem mais
+> nenhum SQL depois deste: o que falta do módulo de documentos é ajuste no app, sem
+> banco.
+
 > Se der erro, **não faça nada além de me mandar a mensagem completa** (ela costuma
 > dizer a linha). O script é re-executável: rodar de novo do começo não duplica nada —
 > isso é testado (`npm run test:sql:rerun`).
@@ -89,8 +94,10 @@ ocorrência — era exatamente o bug B2.
 2. Me mande as duas, ou edite você mesmo nos arquivos `.env` e `.env.production`:
    `VITE_SUPABASE_URL` e `VITE_SUPABASE_ANON_KEY`.
 
-> Ainda não é agora que o app vai funcionar 100%: falta o **bucket de fotos** (passo 10).
-> O login, o cadastro, o fluxo de ocorrência e vistoria já funcionam com este banco.
+> Com este banco, o fluxo de campo está inteiro: cadastro, aprovação, ocorrência com
+> fotos, vistoria com fotos, auditoria. As fotos vão para o bucket privado, não para o
+> banco. O que ainda não migrou é a **biblioteca de documentos** (galeria) e a
+> assinatura do autuado — isso é ajuste no app, sem SQL novo.
 
 ---
 
@@ -124,19 +131,35 @@ SELECT count(*) AS anexos FROM public.anexos;
 
 -- 6. O administrador ativo (esperado: true, uma linha)
 SELECT nome, ativo FROM public.fiscais WHERE email = 'seu-email@aqui.com';
+
+-- 7. O bucket das fotos (esperado: 1 linha, public = false)
+SELECT id, public, file_size_limit FROM storage.buckets WHERE id = 'sifau-anexos';
+
+-- 8. As políticas do bucket (esperado: 4 linhas — uma de cada comando)
+SELECT policyname, cmd FROM pg_policies
+WHERE schemaname = 'storage' AND tablename = 'objects' ORDER BY policyname;
 ```
 
 ---
 
-## O que vem depois (passo 10)
+## O que este script resolve
 
-1. **Bucket privado de fotos** no Storage, com política por pasta de fiscal, e a tabela
-   `anexos` (já criada aqui) passando a guardar o caminho do arquivo em vez do base64
-   dentro do banco. É o que resolve o banco encher: hoje o plano gratuito (500 MB) dá
-   para ~63 ciclos de fiscalização; com o arquivo fora do banco, dá para dezenas de
-   milhares.
-2. **O app passa a usar a tabela nova**: upload no lugar do base64, e a galeria lendo por
-   URL assinada.
+Medido em PostgreSQL real, antes e depois da migração das fotos para o Storage:
 
-O bucket vai exigir mais um pedacinho de SQL — pequeno, e eu te aviso quando chegar a
-hora. Não precisa rodar nada além do que está neste roteiro agora.
+| | por ciclo de fiscalização (ocorrência com 5 fotos + vistoria com 3) |
+|---|---|
+| com o arquivo em base64 na linha | **7.830 KB** de banco |
+| com o arquivo no bucket privado | **9 KB** de banco |
+
+O plano gratuito sai de ~63 ciclos para dezenas de milhares. O novo limite é o Storage
+(1 GB no plano gratuito, ~4.000 fotos a 250 KB), que é o lugar certo para ele: arquivo
+pode ser arquivado ou removido sem tocar no registro.
+
+Para o app subir arquivo é preciso que o bucket e as políticas deste script existam —
+sem eles, a ocorrência entra e a foto **fica na fila** do aparelho, com aviso na tela.
+
+## O que ainda falta (sem SQL novo)
+
+A **biblioteca de documentos** (galeria), os anexos do chat do painel e a assinatura do
+autuado ainda gravam arquivo dentro do banco. É ajuste no app — nenhum deles precisa de
+mudança no banco que você acabou de criar.
