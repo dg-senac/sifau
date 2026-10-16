@@ -268,6 +268,25 @@ export default {
       );
     });
 
+    await t.test('o gatilho recusa anexo embutido (base64) na mensagem', async () => {
+      let mensagem = '';
+      await db.as(IDS.admin, 'authenticated', async () => {
+        try {
+          await db.query(
+            `INSERT INTO public.admin_messages (admin_id, fiscal_id, sender_type, message, attachments)
+             VALUES ($1, $2, 'admin', 'Segue a foto.', ARRAY[$3])`,
+            [IDS.admin, IDS.active, SAMPLE_PHOTO],
+          );
+        } catch (error) {
+          mensagem = error.message;
+        }
+      });
+      t.ok(
+        mensagem.includes('não aceita arquivo embutido'),
+        `recusado pelo gatilho (mensagem: ${mensagem || 'nenhuma — o insert passou'})`,
+      );
+    });
+
     await t.test('documento do fiscal guarda caminho, não arquivo embutido', async () => {
       // A biblioteca digitalizada é o ponto onde o banco mais crescia por
       // upload: PDF e Word não dão para recomprimir.
@@ -301,6 +320,20 @@ export default {
         SELECT conname FROM pg_constraint
         WHERE conrelid = 'public.documentos'::regclass AND conname LIKE '%arquivo_data%'`);
       t.eq(restricoes.rows.map((r) => r.conname), [], 'restrições com o nome antigo');
+    });
+
+    await t.test('anexo de mensagem guarda caminho, não arquivo embutido', async () => {
+      // `admin_messages.attachments` é a lista de arquivos da conversa: cada
+      // item era o data URL inteiro do anexo enviado pelo painel.
+      const caminho = `${IDS.admin}/2026/10/planta-do-imovel.pdf`;
+      const { rows } = await db.as(IDS.admin, 'authenticated', async () =>
+        db.query(
+          `INSERT INTO public.admin_messages (admin_id, fiscal_id, sender_type, message, attachments)
+           VALUES ($1, $2, 'admin', 'Segue a planta do imóvel.', ARRAY[$3])
+           RETURNING id, attachments`,
+          [IDS.admin, IDS.active, caminho],
+        ));
+      t.eq(rows[0]?.attachments, [caminho], 'caminho guardado na lista');
     });
 
     await t.test('o gatilho recusa documento embutido (base64)', async () => {

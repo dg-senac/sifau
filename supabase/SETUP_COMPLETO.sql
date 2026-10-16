@@ -2054,8 +2054,15 @@ COMMENT ON COLUMN public.assinaturas_digitais.certificado_digital IS
 -- gratuito do Supabase (500 MB de banco) isso dá ~63 ciclos antes de encher.
 --
 -- A partir daqui o arquivo mora no Supabase Storage (bucket privado, lido por
--- URL assinada) e o banco guarda apenas o caminho. Esta tabela é o ÚNICO
--- lugar do schema que descreve um arquivo.
+-- URL assinada) e o banco guarda apenas o caminho.
+--
+-- Esta tabela descreve o arquivo de um REGISTRO de fiscalização (ocorrência,
+-- vistoria, ordem de serviço, auto de infração ou mensagem). Os outros dois
+-- usos de arquivo têm casa própria, e de propósito não viram linha aqui:
+-- `documentos` é a biblioteca particular do fiscal (com título, ordem e
+-- vínculo opcional a um registro) e `admin_messages.attachments` é a lista de
+-- anexos da conversa, lida junto da mensagem. O mesmo arquivo em duas tabelas
+-- seriam duas versões da mesma verdade — e a segunda sempre desatualiza.
 
 CREATE TABLE IF NOT EXISTS public.anexos (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -2479,5 +2486,29 @@ DROP TRIGGER IF EXISTS trg_documentos_arquivo_sem_base64 ON public.documentos;
 CREATE TRIGGER trg_documentos_arquivo_sem_base64
   BEFORE INSERT OR UPDATE OF arquivo_path ON public.documentos
   FOR EACH ROW EXECUTE FUNCTION public.reject_inline_base64('arquivo_path');
+
+-- ----------------------------------------------------------------------------
+-- Anexos da conversa: caminho no lugar do arquivo
+-- ----------------------------------------------------------------------------
+-- `admin_messages.attachments` é a lista de arquivos que o administrador envia
+-- ao fiscal no painel. Era mais um ponto com o arquivo dentro da linha, em
+-- base64, e como a coluna é `text[]` (lista de textos) o formato antigo era
+-- exatamente o mesmo das fotos: cada item era um data URL inteiro.
+--
+-- Agora cada item é o caminho no bucket sifau-anexos. O arquivo sobe pela pasta
+-- de quem envia — o administrador —, que é a mesma regra das fotos: cada conta
+-- escreve na própria pasta, e a política do bucket não precisa de exceção.
+--
+-- O que o formato antigo guardava e o novo não: o nome original do arquivo. A
+-- coluna é uma lista de textos, e o caminho carrega o id do arquivo justamente
+-- para não colidir com nomes repetidos. As telas baixam usando o nome do
+-- caminho (`{id}.extensao`), que abre no programa certo por causa da extensão.
+DROP TRIGGER IF EXISTS trg_admin_messages_attachments_sem_base64 ON public.admin_messages;
+CREATE TRIGGER trg_admin_messages_attachments_sem_base64
+  BEFORE INSERT OR UPDATE OF attachments ON public.admin_messages
+  FOR EACH ROW EXECUTE FUNCTION public.reject_inline_base64('attachments');
+
+COMMENT ON COLUMN public.admin_messages.attachments IS
+  'Caminhos dos arquivos da conversa no bucket sifau-anexos (nunca o arquivo). Cada item é um caminho: {remetente_id}/{ano}/{mes}/{anexo_id}.extensao. O primeiro nível é a pasta de quem enviou, que é como a política do bucket autoriza a escrita.';
 
 -- Fim da instalação. Guarde também as migrations em supabase/migrations/.

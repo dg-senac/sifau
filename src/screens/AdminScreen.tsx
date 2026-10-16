@@ -25,6 +25,13 @@ import {
 import { supabase } from '@/lib/supabase';
 import { signOut } from '@/lib/authActions';
 import { Fiscal } from '@/lib/types';
+import { fileUtils } from '@/lib/fileUtils';
+import { ehImagem } from '@/lib/storage';
+import {
+  descartarAnexosDeMensagem, enviarAnexosDeMensagem, nomeDoAnexoDaMensagem,
+  prepararAnexosDeMensagem, type AnexoDeMensagem,
+} from '@/lib/mensagens';
+import { AnexoImagem, BotaoBaixarAnexo } from '@/components/StorageFile';
 
 type FiscalWithStatus = Fiscal & {
   is_online: boolean;
@@ -98,7 +105,11 @@ export function AdminScreen() {
   const [showChat, setShowChat] = useState(false);
   const [messages, setMessages] = useState<AdminMessage[]>([]);
   const [newMessage, setNewMessage] = useState('');
-  const [attachments, setAttachments] = useState<string[]>([]);
+  // O arquivo escolhido fica em memória (com um endereço local só para a
+  // pré-visualização) até a mensagem ser enviada. É no envio que ele sobe para
+  // o bucket — nada de arquivo dentro do banco.
+  const [anexosPendentes, setAnexosPendentes] = useState<{ arquivo: File; preview: string }[]>([]);
+  const [enviandoMensagem, setEnviandoMensagem] = useState(false);
   const [showBanModal, setShowBanModal] = useState(false);
   const [banReason, setBanReason] = useState('');
   const [banType, setBanType] = useState<'temporary' | 'permanent'>('permanent');
@@ -320,7 +331,8 @@ export function AdminScreen() {
   };
 
   const sendMessage = async () => {
-    if (!selectedFiscal || (!newMessage.trim() && attachments.length === 0)) return;
+    if (!selectedFiscal || enviandoMensagem) return;
+    if (!newMessage.trim() && anexosPendentes.length === 0) return;
     setActionMessage('');
 
     const { data: adminData, error: authError } = await supabase.auth.getUser();
@@ -330,39 +342,96 @@ export function AdminScreen() {
       return;
     }
 
+    setEnviandoMensagem(true);
+
+    // Os anexos sobem pela pasta de quem envia (o administrador). Se algum
+    // falhar, a mensagem NÃO é enviada: mensagem anunciando anexo que não
+    // existe é pior que mensagem nenhuma.
+    let anexos: AnexoDeMensagem[] = [];
+    try {
+      anexos = await prepararAnexosDeMensagem({
+        remetenteId: adminId,
+        arquivos: anexosPendentes.map((item) => item.arquivo),
+      });
+      await enviarAnexosDeMensagem(anexos);
+    } catch (error) {
+      console.error('Erro ao enviar anexos da mensagem:', error);
+      setActionMessage(
+        error instanceof Error
+          ? `Nenhuma mensagem foi enviada. ${error.message}`
+          : 'Não foi possível enviar os anexos. Nenhuma mensagem foi enviada.',
+      );
+      setEnviandoMensagem(false);
+      return;
+    }
+
     const { error } = await supabase.from('admin_messages').insert({
       admin_id: adminId,
       fiscal_id: selectedFiscal.id,
       sender_type: 'admin',
       message: newMessage.trim(),
-      attachments,
+      attachments: anexos.map((anexo) => anexo.path),
     });
 
     if (error) {
       console.error('Erro ao enviar mensagem:', error);
+      // A mensagem não existe; o arquivo que já subiu não pode ficar pagando
+      // cota sozinho no bucket.
+      await descartarAnexosDeMensagem(anexos);
       setActionMessage('Não foi possível enviar a mensagem. Tente novamente.');
     } else {
+      limparPendentes();
       setNewMessage('');
-      setAttachments([]);
       await loadMessages(selectedFiscal.id);
     }
+
+    setEnviandoMensagem(false);
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files) return;
+    const arquivos = Array.from(e.target.files ?? []);
+    e.target.value = '';
+    if (arquivos.length === 0) return;
 
-    const readers = Array.from(files).map((file) =>
-      new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result as string);
-        reader.onerror = reject;
-        reader.readAsDataURL(file);
-      })
-    );
+    const recusados: string[] = [];
+    const aceitos: { arquivo: File; preview: string }[] = [];
 
-    Promise.all(readers).then(results => {
-      setAttachments([...attachments, ...results]);
+    for (const arquivo of arquivos) {
+      if (!fileUtils.validateFileSize(arquivo)) {
+        recusados.push(`${arquivo.name} (acima de ${fileUtils.LIMITE_MB} MB)`);
+        continue;
+      }
+      if (!fileUtils.validateFileType(arquivo)) {
+        recusados.push(`${arquivo.name} (tipo não aceito)`);
+        continue;
+      }
+      aceitos.push({
+        arquivo,
+        preview: arquivo.type.startsWith('image/') ? URL.createObjectURL(arquivo) : '',
+      });
+    }
+
+    if (recusados.length > 0) {
+      setActionMessage(`Não dá para anexar: ${recusados.join('; ')}. Use imagem, PDF ou Word de até ${fileUtils.LIMITE_MB} MB.`);
+    } else {
+      setActionMessage('');
+    }
+
+    setAnexosPendentes((atuais) => [...atuais, ...aceitos]);
+  };
+
+  const removerPendente = (indice: number) => {
+    setAnexosPendentes((atuais) => {
+      const item = atuais[indice];
+      if (item?.preview) URL.revokeObjectURL(item.preview);
+      return atuais.filter((_, idx) => idx !== indice);
+    });
+  };
+
+  const limparPendentes = () => {
+    setAnexosPendentes((atuais) => {
+      atuais.forEach((item) => { if (item.preview) URL.revokeObjectURL(item.preview); });
+      return [];
     });
   };
 
@@ -836,14 +905,19 @@ export function AdminScreen() {
                       <p>{msg.message}</p>
                       {msg.attachments.length > 0 && (
                         <div className="message-attachments">
-                          {msg.attachments.map((att, i) => (
-                            <div key={i} className="attachment-preview">
-                              {att.startsWith('data:image') ? (
-                                <img src={att} alt="Anexo" />
+                          {msg.attachments.map((caminho) => (
+                            <div key={caminho} className="attachment-preview">
+                              {ehImagem(caminho) ? (
+                                <AnexoImagem path={caminho} alt="Anexo da mensagem" />
                               ) : (
                                 <div className="file-attachment">
                                   <FileText size={24} />
-                                  <span>Arquivo anexo</span>
+                                  <span>{nomeDoAnexoDaMensagem(caminho)}</span>
+                                  <BotaoBaixarAnexo
+                                    path={caminho}
+                                    nome={nomeDoAnexoDaMensagem(caminho)}
+                                    titulo="Baixar anexo"
+                                  />
                                 </div>
                               )}
                             </div>
@@ -861,16 +935,16 @@ export function AdminScreen() {
               <div ref={chatEndRef} />
             </div>
             <div className="chat-input">
-              {attachments.length > 0 && (
+              {anexosPendentes.length > 0 && (
                 <div className="chat-attachments">
-                  {attachments.map((att, i) => (
-                    <div key={i} className="attachment-preview small">
-                      {att.startsWith('data:image') ? (
-                        <img src={att} alt="Preview" />
+                  {anexosPendentes.map((item, i) => (
+                    <div key={item.arquivo.name + i} className="attachment-preview small">
+                      {item.preview ? (
+                        <img src={item.preview} alt={item.arquivo.name} />
                       ) : (
                         <FileText size={20} />
                       )}
-                      <button onClick={() => setAttachments(attachments.filter((_, idx) => idx !== i))}>
+                      <button onClick={() => removerPendente(i)} title={`Remover ${item.arquivo.name}`}>
                         <X size={14} />
                       </button>
                     </div>
@@ -889,7 +963,7 @@ export function AdminScreen() {
                   ref={fileInputRef}
                   type="file"
                   multiple
-                  accept="image/*,video/*,.pdf,.doc,.docx"
+                  accept="image/*,.pdf,.doc,.docx"
                   style={{ display: 'none' }}
                   onChange={handleFileUpload}
                 />
@@ -900,8 +974,8 @@ export function AdminScreen() {
                   onChange={(e) => setNewMessage(e.target.value)}
                   onKeyPress={(e) => e.key === 'Enter' && sendMessage()}
                 />
-                <button onClick={sendMessage} className="send-button">
-                  <Send size={20} />
+                <button onClick={sendMessage} className="send-button" disabled={enviandoMensagem}>
+                  {enviandoMensagem ? <Clock size={20} /> : <Send size={20} />}
                 </button>
               </div>
             </div>

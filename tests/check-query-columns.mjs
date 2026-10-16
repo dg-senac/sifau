@@ -24,22 +24,23 @@ const paint = (c, t) => (process.stdout.isTTY === false ? t : `${c}${t}${RESET}`
 const GREEN = '\x1b[32m', RED = '\x1b[31m', DIM = '\x1b[2m', BOLD = '\x1b[1m';
 
 /**
- * Tabelas com coluna de anexo em base64 e a coluna correspondente.
- * `proibido` é a lista de arquivos onde o `select('*')` é aceitável, com o
- * motivo — hoje só há um caso, e ele é temporário.
+ * Tabelas que já guardaram arquivo em base64 e a coluna que hoje guarda o
+ * CAMINHO. O `select('*')` nelas é proibido: era assim que uma lista de
+ * ocorrências trazia, sem ninguém pedir, o conteúdo de todas as fotos.
+ *
+ * `permitidoEm` é a lista de arquivos onde o `select('*')` continua aceitável,
+ * com o motivo. Está vazia de propósito: depois de as cinco colunas migrarem
+ * para o Storage, nenhuma lista precisa do arquivo dentro da linha.
+ *
+ * `admin_messages` saiu da lista quando `attachments` passou a guardar
+ * caminhos: a linha da mensagem ficou leve, e trazer todas as colunas dela
+ * deixou de ser problema.
  */
 const TABELAS_PESADAS = {
   ocorrencias: { coluna: 'fotos', permitidoEm: [] },
   vistorias: { coluna: 'fotos_depois', permitidoEm: [] },
   autos_infracao: { coluna: 'assinatura_autuado', permitidoEm: [] },
   documentos: { coluna: 'arquivo_path', permitidoEm: [] },
-  admin_messages: {
-    coluna: 'attachments',
-    // O painel administrativo exibe os anexos na conversa.
-    // MensagensScreen só checa `attachments.length > 0` e poderia usar uma
-    // consulta mais leve quando houver contagem no schema.
-    permitidoEm: ['src/screens/AdminScreen.tsx', 'src/screens/MessagesScreen.tsx'],
-  },
 };
 
 function arquivosFonte(dir) {

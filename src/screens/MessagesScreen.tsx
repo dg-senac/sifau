@@ -9,6 +9,7 @@ type AdminMessage = {
   fiscal_id: string;
   sender_type: 'admin' | 'fiscal';
   message: string;
+  /** Caminhos no bucket `sifau-anexos` — não o arquivo (ver lib/mensagens.ts). */
   attachments: string[];
   read_at: string | null;
   created_at: string;
@@ -119,6 +120,11 @@ export function MessagesScreen({ fiscal }: { fiscal: Fiscal | null }) {
               <div className="message-page-bubble">
                 <b>{item.sender_type === 'fiscal' ? 'Você' : 'Administração'}</b>
                 <p>{item.message}</p>
+                {/* O arquivo do anexo está na pasta de quem enviou (o
+                    administrador) e a política do bucket só deixa cada conta
+                    ler a própria pasta. Enquanto não existir uma política para
+                    o destinatário da mensagem, o anexo não abre aqui — por isso
+                    o aviso, em vez de um botão que falharia. */}
                 {item.attachments.length > 0 && <small>Anexos disponíveis somente no painel administrativo.</small>}
                 <time dateTime={item.created_at}>{new Date(item.created_at).toLocaleString('pt-BR')}</time>
               </div>
