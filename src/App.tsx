@@ -22,6 +22,7 @@ const ProfileScreen = lazy(() => import('@/screens/ProfileScreen').then((module)
 const NotificationsScreen = lazy(() => import('@/screens/NotificationsScreen').then((module) => ({ default: module.NotificationsScreen })));
 const MessagesScreen = lazy(() => import('@/screens/MessagesScreen').then((module) => ({ default: module.MessagesScreen })));
 const MapScreen = lazy(() => import('@/screens/MapScreen').then((module) => ({ default: module.MapScreen })));
+const DocumentsScreen = lazy(() => import('@/screens/DocumentsScreen').then((module) => ({ default: module.DocumentsScreen })));
 const AdminScreen = lazy(() => import('@/screens/AdminScreen').then((module) => ({ default: module.AdminScreen })));
 
 const navItems: { id: Screen; label: string; icon: typeof HomeIcon }[] = [
@@ -305,6 +306,8 @@ function App() {
         return <MessagesScreen fiscal={fiscal} />;
       case 'map':
         return <MapScreen />;
+      case 'documents':
+        return <DocumentsScreen fiscal={fiscal} />;
       case 'admin':
         return isAdmin ? <AdminScreen /> : <HomeScreen fiscal={fiscal} onNavigate={setScreen} />;
       default:

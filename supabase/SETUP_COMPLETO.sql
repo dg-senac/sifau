@@ -13,7 +13,7 @@
 -- Novos cadastros de fiscais ficam inativos até aprovação de um administrador.
 -- ============================================================================
 
--- Instalação: aplicativo principal SIFAU
+-- Instalação: aplicativo principal SIFAU + módulo de documentos
 
 
 -- ============================================================================
@@ -610,6 +610,129 @@ $$;
 
 -- A função legada não pode ser chamada por clientes; a migration de hardening a remove.
 REVOKE ALL ON FUNCTION public.wipe_user_data(uuid) FROM PUBLIC, anon, authenticated;
+
+-- ============================================================================
+-- Origem: 20260930130000_add_documents.sql
+-- ============================================================================
+-- ============================================================================
+-- SIFAU — Sistema de Documentos
+-- Adiciona suporte para galeria de fotos, histórico de documentos e
+-- registros de assinatura manuscrita (sem validação de certificado digital)
+-- ============================================================================
+
+-- Tabela de documentos e fotos
+CREATE TABLE IF NOT EXISTS public.documentos (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  fiscal_id uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  ocorrencia_id uuid REFERENCES public.ocorrencias(id) ON DELETE CASCADE,
+  vistoria_id uuid REFERENCES public.vistorias(id) ON DELETE CASCADE,
+  ordem_servico_id uuid REFERENCES public.ordens_servico(id) ON DELETE CASCADE,
+  tipo_documento text NOT NULL CHECK (tipo_documento IN ('foto', 'assinatura', 'documento', 'relatorio', 'auto_infracao')),
+  titulo text,
+  descricao text,
+  arquivo_data text NOT NULL, -- Base64 do arquivo
+  arquivo_nome text,
+  arquivo_tipo text, -- MIME type
+  arquivo_tamanho integer, -- tamanho em bytes
+  ordem integer DEFAULT 0, -- para ordenação
+  metadados jsonb DEFAULT '{}', -- informações adicionais
+  criado_em timestamptz NOT NULL DEFAULT now(),
+  atualizado_em timestamptz NOT NULL DEFAULT now()
+);
+
+-- Índices para performance
+CREATE INDEX IF NOT EXISTS idx_documentos_fiscal ON public.documentos(fiscal_id);
+CREATE INDEX IF NOT EXISTS idx_documentos_ocorrencia ON public.documentos(ocorrencia_id);
+CREATE INDEX IF NOT EXISTS idx_documentos_vistoria ON public.documentos(vistoria_id);
+CREATE INDEX IF NOT EXISTS idx_documentos_ordem_servico ON public.documentos(ordem_servico_id);
+CREATE INDEX IF NOT EXISTS idx_documentos_tipo ON public.documentos(tipo_documento);
+CREATE INDEX IF NOT EXISTS idx_documentos_criado_em ON public.documentos(criado_em DESC);
+
+-- Trigger para atualizar atualizado_em
+CREATE OR REPLACE FUNCTION public.atualizar_documento_timestamp()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.atualizado_em = now();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trigger_atualizar_documento_timestamp
+  BEFORE UPDATE ON public.documentos
+  FOR EACH ROW
+  EXECUTE FUNCTION public.atualizar_documento_timestamp();
+
+-- Política de segurança RLS
+ALTER TABLE public.documentos ENABLE ROW LEVEL SECURITY;
+
+-- Qualquer usuário autenticado pode ver documentos
+CREATE POLICY "documentos_view_all"
+  ON public.documentos FOR SELECT
+  TO authenticated
+  USING (true);
+
+-- Usuários podem inserir seus próprios documentos
+CREATE POLICY "documentos_insert_own"
+  ON public.documentos FOR INSERT
+  TO authenticated
+  WITH CHECK (fiscal_id = auth.uid());
+
+-- Usuários podem atualizar seus próprios documentos
+CREATE POLICY "documentos_update_own"
+  ON public.documentos FOR UPDATE
+  TO authenticated
+  USING (fiscal_id = auth.uid())
+  WITH CHECK (fiscal_id = auth.uid());
+
+-- Usuários podem deletar seus próprios documentos
+CREATE POLICY "documentos_delete_own"
+  ON public.documentos FOR DELETE
+  TO authenticated
+  USING (fiscal_id = auth.uid());
+
+-- Tabela de assinaturas digitais avançadas
+CREATE TABLE IF NOT EXISTS public.assinaturas_digitais (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  fiscal_id uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  documento_id uuid REFERENCES public.documentos(id) ON DELETE CASCADE,
+  assinatura_data text NOT NULL, -- Base64 da imagem da assinatura
+  certificado_digital text, -- certificado digital em base64
+  certificado_valido boolean DEFAULT false,
+  certificado_emissor text,
+  certificado_validade_inicio timestamptz,
+  certificado_validade_fim timestamptz,
+  hash_documento text, -- hash do documento assinado
+  ip_address text,
+  dispositivo_info jsonb DEFAULT '{}',
+  criado_em timestamptz NOT NULL DEFAULT now()
+);
+
+-- Índices para assinaturas
+CREATE INDEX IF NOT EXISTS idx_assinaturas_fiscal ON public.assinaturas_digitais(fiscal_id);
+CREATE INDEX IF NOT EXISTS idx_assinaturas_documento ON public.assinaturas_digitais(documento_id);
+
+-- RLS para assinaturas
+ALTER TABLE public.assinaturas_digitais ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "assinaturas_view_all"
+  ON public.assinaturas_digitais FOR SELECT
+  TO authenticated
+  USING (true);
+
+CREATE POLICY "assinaturas_insert_own"
+  ON public.assinaturas_digitais FOR INSERT
+  TO authenticated
+  WITH CHECK (fiscal_id = auth.uid());
+
+-- Certificate validation is intentionally not implemented in the browser app.
+-- Keep no RPC that could falsely mark user-provided certificate data as valid.
+
+-- Comentários
+COMMENT ON TABLE public.documentos IS 'Sistema de documentos do SIFAU - fotos, assinaturas, relatórios';
+COMMENT ON TABLE public.assinaturas_digitais IS 'Registros de assinatura manuscrita; não representam certificado ou assinatura digital validada';
+COMMENT ON COLUMN public.documentos.arquivo_data IS 'Dados do arquivo em base64';
+COMMENT ON COLUMN public.documentos.metadados IS 'Metadados adicionais em JSON (ex: GPS, timestamp da foto, etc)';
+COMMENT ON COLUMN public.assinaturas_digitais.certificado_digital IS 'Campo legado; não é validado pelo sistema';
 
 -- ============================================================================
 -- Origem: 20261012090000_harden_access_and_audit.sql
@@ -1712,5 +1835,139 @@ END $$;
 
 ALTER TABLE public.notificacoes REPLICA IDENTITY FULL;
 ALTER TABLE public.admin_messages REPLICA IDENTITY FULL;
+
+-- ============================================================================
+-- Origem: 20261012100000_harden_documents.sql
+-- ============================================================================
+-- Harden the optional documents module. The initial documents migration
+-- exposed all stored files and signatures to every authenticated account.
+
+ALTER TABLE public.documentos ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.assinaturas_digitais ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "documentos_view_all" ON public.documentos;
+DROP POLICY IF EXISTS "documentos_insert_own" ON public.documentos;
+DROP POLICY IF EXISTS "documentos_update_own" ON public.documentos;
+DROP POLICY IF EXISTS "documentos_delete_own" ON public.documentos;
+DROP POLICY IF EXISTS documentos_select_owner_or_admin ON public.documentos;
+DROP POLICY IF EXISTS documentos_insert_owner ON public.documentos;
+DROP POLICY IF EXISTS documentos_update_owner ON public.documentos;
+DROP POLICY IF EXISTS documentos_delete_owner ON public.documentos;
+
+DROP POLICY IF EXISTS "assinaturas_view_all" ON public.assinaturas_digitais;
+DROP POLICY IF EXISTS "assinaturas_insert_own" ON public.assinaturas_digitais;
+DROP POLICY IF EXISTS assinaturas_select_owner_or_admin ON public.assinaturas_digitais;
+DROP POLICY IF EXISTS assinaturas_insert_owner ON public.assinaturas_digitais;
+
+REVOKE ALL ON public.documentos, public.assinaturas_digitais FROM PUBLIC, anon, authenticated;
+GRANT SELECT, INSERT, DELETE ON public.documentos TO authenticated;
+GRANT UPDATE (ordem) ON public.documentos TO authenticated;
+GRANT SELECT, INSERT ON public.assinaturas_digitais TO authenticated;
+
+CREATE OR REPLACE FUNCTION public.document_relations_belong_to_user(
+  p_owner_id uuid,
+  p_occurrence_id uuid,
+  p_inspection_id uuid,
+  p_order_id uuid
+)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+  SELECT p_owner_id = auth.uid()
+    AND (
+      p_occurrence_id IS NULL
+      OR EXISTS (
+        SELECT 1 FROM public.ocorrencias AS o
+        WHERE o.id = p_occurrence_id
+          AND (o.fiscal_registrou = auth.uid() OR o.fiscal_designado = auth.uid())
+      )
+    )
+    AND (
+      p_inspection_id IS NULL
+      OR EXISTS (
+        SELECT 1 FROM public.vistorias AS v
+        WHERE v.id = p_inspection_id AND v.fiscal_id = auth.uid()
+      )
+    )
+    AND (
+      p_order_id IS NULL
+      OR EXISTS (
+        SELECT 1 FROM public.ordens_servico AS os
+        WHERE os.id = p_order_id
+          AND (os.fiscal_abertura = auth.uid() OR os.fiscal_designado = auth.uid())
+      )
+    );
+$$;
+REVOKE ALL ON FUNCTION public.document_relations_belong_to_user(uuid, uuid, uuid, uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.document_relations_belong_to_user(uuid, uuid, uuid, uuid) TO authenticated;
+
+CREATE POLICY documentos_select_owner_or_admin ON public.documentos FOR SELECT TO authenticated
+  USING (public.is_admin() OR (public.is_active_fiscal() AND fiscal_id = auth.uid()));
+CREATE POLICY documentos_insert_owner ON public.documentos FOR INSERT TO authenticated
+  WITH CHECK (
+    public.is_admin()
+    OR (
+      public.is_active_fiscal()
+      AND public.document_relations_belong_to_user(fiscal_id, ocorrencia_id, vistoria_id, ordem_servico_id)
+    )
+  );
+CREATE POLICY documentos_update_owner ON public.documentos FOR UPDATE TO authenticated
+  USING (public.is_admin() OR (public.is_active_fiscal() AND fiscal_id = auth.uid()))
+  WITH CHECK (
+    public.is_admin()
+    OR (
+      public.is_active_fiscal()
+      AND public.document_relations_belong_to_user(fiscal_id, ocorrencia_id, vistoria_id, ordem_servico_id)
+    )
+  );
+CREATE POLICY documentos_delete_owner ON public.documentos FOR DELETE TO authenticated
+  USING (public.is_admin() OR (public.is_active_fiscal() AND fiscal_id = auth.uid()));
+
+CREATE POLICY assinaturas_select_owner_or_admin ON public.assinaturas_digitais FOR SELECT TO authenticated
+  USING (public.is_admin() OR (public.is_active_fiscal() AND fiscal_id = auth.uid()));
+CREATE POLICY assinaturas_insert_owner ON public.assinaturas_digitais FOR INSERT TO authenticated
+  WITH CHECK (
+    fiscal_id = auth.uid()
+    AND public.is_active_fiscal()
+    AND (
+      documento_id IS NULL
+      OR EXISTS (
+        SELECT 1 FROM public.documentos AS d
+        WHERE d.id = documento_id AND d.fiscal_id = auth.uid()
+      )
+    )
+  );
+
+-- Never treat uploaded metadata as proof that a certificate or signature was
+-- cryptographically verified. Real certificate validation needs a trusted CA.
+CREATE OR REPLACE FUNCTION public.mark_signature_certificate_unverified()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = ''
+AS $$
+BEGIN
+  NEW.certificado_valido := false;
+  RETURN NEW;
+END;
+$$;
+DROP TRIGGER IF EXISTS trg_mark_signature_certificate_unverified ON public.assinaturas_digitais;
+CREATE TRIGGER trg_mark_signature_certificate_unverified
+  BEFORE INSERT OR UPDATE ON public.assinaturas_digitais
+  FOR EACH ROW EXECUTE FUNCTION public.mark_signature_certificate_unverified();
+REVOKE ALL ON FUNCTION public.mark_signature_certificate_unverified() FROM PUBLIC, anon, authenticated;
+
+-- Remove the old simulated RPCs; neither is used by the current app.
+DROP FUNCTION IF EXISTS public.validar_certificado_digital(text, text, timestamptz, timestamptz);
+DROP FUNCTION IF EXISTS public.gerar_hash_documento(text);
+
+COMMENT ON TABLE public.assinaturas_digitais IS
+  'Registros de assinatura manuscrita; não representam certificado ou assinatura digital validada';
+COMMENT ON COLUMN public.assinaturas_digitais.certificado_valido IS
+  'Campo legado; o sistema força false e não valida certificados digitais';
+COMMENT ON COLUMN public.assinaturas_digitais.certificado_digital IS
+  'Campo legado; não é validado pelo sistema';
 
 -- Fim da instalação. Guarde também as migrations em supabase/migrations/.

@@ -8,6 +8,7 @@ import {
   MessageSquare,
   Plus,
   FileCheck2,
+  FileText,
   ShieldCheck,
   UserCog,
   Users,
@@ -17,7 +18,7 @@ import { signOut } from '@/lib/authActions';
 import { Fiscal, Screen } from '@/lib/types';
 import { SyncBanner } from '@/components/SyncBanner';
 
-const MORE_GROUP: Screen[] = ['more', 'profile', 'notifications', 'messages', 'map', 'users', 'audit'];
+const MORE_GROUP: Screen[] = ['more', 'profile', 'notifications', 'messages', 'map', 'users', 'audit', 'documents'];
 
 export function AppShell({
   fiscal,
@@ -120,6 +121,9 @@ export function AppShell({
             </button>
             <button className="drawer-link" onClick={() => change('audit')}>
               <FileCheck2 size={19} /> Auditoria
+            </button>
+            <button className="drawer-link" onClick={() => change('documents')}>
+              <FileText size={19} /> Documentos
             </button>
             <button className="drawer-link" onClick={() => change('users')}>
               <Users size={19} /> Fiscais cadastrados

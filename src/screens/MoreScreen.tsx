@@ -1,4 +1,4 @@
-import { Bell, ChevronRight, FileCheck2, LogOut, Map, MessageSquare, User, Users } from 'lucide-react';
+import { Bell, ChevronRight, FileCheck2, FileText, LogOut, Map, MessageSquare, User, Users } from 'lucide-react';
 import { signOut } from '@/lib/authActions';
 import { Fiscal, Screen } from '@/lib/types';
 import { PageTitle } from '@/components/ui';
@@ -18,6 +18,7 @@ export function MoreScreen({
     { id: 'messages', label: 'Mensagens', desc: 'Conversa com a administração', icon: MessageSquare },
     { id: 'map', label: 'Mapa da cidade', desc: 'Ocorrências geolocalizadas', icon: Map },
     { id: 'audit', label: 'Auditoria', desc: 'Histórico imutável de ações', icon: FileCheck2 },
+    { id: 'documents', label: 'Documentos', desc: 'Fotos e arquivos de fiscalização', icon: FileText },
     { id: 'users', label: 'Fiscais cadastrados', desc: 'Equipe municipal', icon: Users },
   ];
 

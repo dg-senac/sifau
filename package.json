@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.app.json",
     "test:sql": "node tests/run.mjs",
-    "test:sql:migrations": "node tests/run.mjs --source=migrations"
+    "test:sql:migrations": "node tests/run.mjs --source=migrations",
+    "test:sql:parity": "node tests/compare-install-paths.mjs"
   },
   "dependencies": {
     "@capacitor/core": "^6.1.2",
