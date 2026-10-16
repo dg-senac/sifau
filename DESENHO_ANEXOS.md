@@ -1,6 +1,8 @@
 # Passo 7 — Desenho do modelo único de anexos
 
-**Status:** proposta, aguardando aprovação antes de virar SQL.
+**Status:** ✅ **implementado** — a tabela está no `SETUP_COMPLETO.sql` e na migration
+`20261014000000_create_anexos.sql`, com 19 testes próprios em `tests/suites/05-anexos.test.mjs`
+(o que falta é o aplicativo passar a usar: passo 10).
 **Decisões já tomadas por você:** modelo unificado · fotos reduzidas para 1280 px / ~250 KB.
 
 ---
@@ -128,5 +130,36 @@ A migration original do módulo de documentos **admitiu por escrito** ter expost
 ## 7. O que preciso de você
 
 **Aprovar o desenho.** Se estiver de acordo, o passo 8 implementa: o `SETUP_COMPLETO.sql` consolidado, com esta tabela, sem nenhuma política `USING (true)` (mata o bug B1 na origem) e com `bootstrap_admin` ativando o fiscal (mata o B2 na origem).
+
+---
+
+## 8. O que foi implementado (passo 8) — e as duas diferenças em relação a este desenho
+
+**Igual ao desenho:** as cinco colunas de vínculo com FK, o CHECK de exatamente um
+vínculo, `tipo` com os 7 valores, `momento` (`antes`/`depois`/NULL), `storage_path`
+único, dimensões, `metadados`, RLS e os grants por coluna. O `UPDATE` só alcança
+`titulo`, `descricao` e `ordem`: o arquivo é imutável por permissão de coluna, não
+por convenção do aplicativo.
+
+**Diferença 1 — como o vínculo é conferido.** O desenho dizia "o alvo do vínculo
+pertence a quem está inserindo". Isso virou uma função `SECURITY DEFINER`,
+`attachment_links_belong_to_user(...)`, no mesmo padrão do
+`document_relations_belong_to_user` que já existia para documentos. Ganho: as
+regras do vínculo ficam em um lugar só e são testáveis. O caso de
+`autos_infracao` (a única tabela vinculada **sem** coluna de fiscal — o dono vem
+da ordem de serviço ou da ocorrência) está resolvido lá dentro.
+
+**Diferença 2 — DELETE também pelo administrador.** O desenho dizia "apenas o
+dono". O administrador pode apagar, para conseguir limpar um anexo impróprio sem
+depender do fiscal. É o mesmo critério que `documentos` já usa.
+
+**Verificado por teste** (`tests/suites/05-anexos.test.mjs`, 19 casos): anexo sem
+vínculo e anexo com dois vínculos são recusados · anexo apontando para registro
+inexistente é recusado pela FK · fiscal não anexa em ocorrência de outro nem em
+nome de outro · caminho de arquivo duplicado é recusado · o dono vê, o fiscal
+designado vê **só o alvo dele**, o administrador vê, o recém-cadastrado não vê
+nada · o caminho do arquivo não muda por UPDATE · quem não é dono não apaga.
+Testei a suíte **ao contrário**: enfraquecendo a política de INSERT, a de SELECT e
+o CHECK, os testes correspondentes falham — ou seja, eles medem o que dizem medir.
 
 **Um ponto que vale sua atenção:** a redução de qualidade das fotos que você aprovou (1280 px / 250 KB) será aplicada **também** às fotos de documento na galeria, que hoje usa 1920 px. Se a galeria servir para digitalizar documento com texto miúdo, 1280 px pode ser pouco para leitura. Se for esse o uso, mantenho 1920 px só nela. Me diga se a galeria é para registro fotográfico ou para digitalização de documento.

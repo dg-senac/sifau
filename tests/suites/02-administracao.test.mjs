@@ -15,7 +15,7 @@ export default {
 
     // Este cenário NÃO usa o contorno do B2, porque o próprio comportamento do
     // bootstrap é o objeto do teste.
-    await seedScenario(db, { approve: [], activateAdmin: false });
+    await seedScenario(db, { approve: [] });
 
     await t.test('bootstrap_admin registra o administrador', async () => {
       const { rows } = await db.owner(

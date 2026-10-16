@@ -28,24 +28,21 @@ export const EMAILS = {
  * @param {object} db        handle devolvido por createDatabase()
  * @param {object} [options]
  * @param {string[]} [options.approve]  ids de fiscais que devem ser aprovados
- * @param {boolean}  [options.activateAdmin=true]
- *        Ativa o fiscal do administrador como superusuário.
- *        IMPORTANTE: isto é um contorno do defeito B2 — `bootstrap_admin()`
- *        cria o administrador mas deixa o perfil fiscal inativo. Existe um
- *        teste dedicado a esse defeito em `02-administracao`. Aqui o contorno
- *        serve apenas para que as demais suítes partam de um admin funcional.
+ *
+ * O administrador sai daqui com o perfil fiscal ATIVO, e isso é exigido de
+ * `bootstrap_admin()` — não forçado aqui. O defeito B2 era justamente
+ * `bootstrap_admin()` gravar a linha em `administradores` sem ativar o fiscal,
+ * o que deixava `is_active_fiscal() = false` e derrubava toda operação que
+ * dependesse dela. Se essa correção regredir, as suítes falham em massa, em
+ * vez de passarem por causa de um contorno no cenário de teste.
  */
-export async function seedScenario(db, { approve = [IDS.active, IDS.other], activateAdmin = true } = {}) {
+export async function seedScenario(db, { approve = [IDS.active, IDS.other] } = {}) {
   await db.createAuthUser({
     id: IDS.admin,
     email: EMAILS.admin,
     meta: { nome: 'Administrador SIFAU', telefone: '8100000000', bairro: 'Centro' },
   });
   await db.owner(`SELECT public.bootstrap_admin($1, $2)`, [EMAILS.admin, 'Administrador SIFAU']);
-
-  if (activateAdmin) {
-    await db.owner(`UPDATE public.fiscais SET ativo = true WHERE id = $1`, [IDS.admin]);
-  }
 
   await db.createAuthUser({
     id: IDS.pending,
