@@ -129,3 +129,4 @@ base64 não é uma decisão que passe despercebida.
 - A localização é enviada enquanto o fiscal está com o app aberto e ativo. Informe essa coleta na política de privacidade da organização.
 - Push nativo é opcional e exige Firebase Cloud Messaging HTTP v1, Supabase Edge Function e webhook privado. Veja [`GUIA_NOVAS_FUNCIONALIDADES.md`](GUIA_NOVAS_FUNCIONALIDADES.md).
 - O código SQL foi verificado com parser PostgreSQL e smoke test local em PGlite com um esquema Supabase simulado; **não foi aplicado a um projeto Supabase real**. Faça staging e backup antes da produção.
+- O CI roda os mesmos testes no GitHub. Ele não substitui o teste em projeto Supabase real: o simulador cobre RLS, gatilhos, funções e privilégios, e não cobre e-mail, Storage de verdade nem o painel.

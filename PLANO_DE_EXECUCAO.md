@@ -137,10 +137,11 @@ Aqui é onde os dois bugs de SQL morrem **por construção**, em vez de remendo.
 - **Para você testar (5 minutos):** entre pelo app → "Esqueci minha senha" → informe o e-mail do administrador → receba o link → abra: o app deve pedir a **nova senha** (não deve entrar direto) → defina → entre com a nova. Depois, no perfil, troque a senha de novo, errando a senha atual de propósito para ver a recusa.
 - **O que falta para funcionar no aplicativo instalado:** cadastrar o endereço público do app no painel do Supabase (Authentication → URL Configuration → *Additional Redirect URLs*) e preencher `VITE_APP_URL`. Está na etapa 5 do `ROTEIRO_APLICACAO.md`.
 
-### ⬜ Passo 12 — CI de verdade
-- **O que muda:** job que roda `typecheck` + `lint` + `build` + o harness de SQL em cada push.
-- **Resolve:** H3 — hoje só existe o workflow de APK. B1 e B2 passariam a ser impossíveis de reintroduzir.
-- **Verificação:** abrir um PR de propósito com erro e ver o CI reprovar.
+### ✅ Passo 12 — CI de verdade
+- **O que muda:** `.github/workflows/verify.yml`, rodando em todo pull request e em todo push para `main`: `npm ci` → `npm run verify` (tipo, lint, unidade, colunas, SQL das duas instalações, paridade, re-execução) → `npm run build`.
+- **Resolve:** H3 — até aqui só existia o workflow de APK, que constrói e não julga. **O que o CI protege não é estilo: são os dois defeitos que quase foram para produção.** B1 (trilha de auditoria legível por usuário não aprovado) e B2 (administrador sem perfil fiscal ativo) eram invisíveis em revisão de código — os dois só apareceram porque um teste de banco existia para pegá-los. Enquanto o teste morava só na máquina de quem escreveu, ele protegia até o próximo esquecimento.
+- **Detalhe que importa:** o job fixa Node 22 pela mesma razão do passo 11 — os testes de unidade importam `.ts` direto e dependem da remoção de tipos (22.18+). Num Node mais antigo o passo falharia por motivo errado, e falha por motivo errado ensina a ignorar o CI.
+- **Verificação:** pull request aberto nesta mesma sessão, com o resultado do CI olhado de fora (o veredito é do GitHub, não meu).
 
 **✅ Fim da Fase E:** produto sem lacuna bloqueante, com rede de proteção automatizada.
 

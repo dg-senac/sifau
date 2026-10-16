@@ -20,6 +20,10 @@ npm run test:unit             # funções puras do app (sem navegador, sem Supab
 npm run verify                # tudo em sequência, com tipo, lint e build
 ```
 
+O mesmo `npm run verify` roda no CI (`.github/workflows/verify.yml`) em todo pull
+request e em todo push para `main`. Se você for mexer no SQL, rode antes de
+enviar: é mais barato do que descobrir depois de aplicar no Supabase.
+
 Sem dependências externas além do `npm install`: não precisa de Docker, de servidor
 PostgreSQL nem de credenciais.
 
