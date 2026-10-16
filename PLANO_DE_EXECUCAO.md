@@ -141,7 +141,10 @@ Aqui é onde os dois bugs de SQL morrem **por construção**, em vez de remendo.
 - **O que muda:** `.github/workflows/verify.yml`, rodando em todo pull request e em todo push para `main`: `npm ci` → `npm run verify` (tipo, lint, unidade, colunas, SQL das duas instalações, paridade, re-execução) → `npm run build`.
 - **Resolve:** H3 — até aqui só existia o workflow de APK, que constrói e não julga. **O que o CI protege não é estilo: são os dois defeitos que quase foram para produção.** B1 (trilha de auditoria legível por usuário não aprovado) e B2 (administrador sem perfil fiscal ativo) eram invisíveis em revisão de código — os dois só apareceram porque um teste de banco existia para pegá-los. Enquanto o teste morava só na máquina de quem escreveu, ele protegia até o próximo esquecimento.
 - **Detalhe que importa:** o job fixa Node 22 pela mesma razão do passo 11 — os testes de unidade importam `.ts` direto e dependem da remoção de tipos (22.18+). Num Node mais antigo o passo falharia por motivo errado, e falha por motivo errado ensina a ignorar o CI.
-- **Verificação:** pull request aberto nesta mesma sessão, com o resultado do CI olhado de fora (o veredito é do GitHub, não meu).
+- **Verificação:** feita em duas mãos, com o veredito do GitHub e não meu.
+  1. **Verde:** pull request [#2](https://github.com/dg-senac/sifau/pull/2), job `verificar` **passou em 53 s** (`npm ci` → verificação inteira → build).
+  2. **Vermelho, de propósito:** com um defeito injetado de propósito no SQL (a guarda anti-base64 deixando de reconhecer `data:`), o mesmo job **reprovou em 32 s** — e reprovou no passo certo, com o build nem chegando a rodar. Um CI que nunca foi visto reprovando não é proteção, é enfeite; a injeção foi revertida em seguida e o histórico do PR ficou limpo (o defeito de propósito e sua reversão foram descartados antes de enviar).
+- **O que fica pendente de você:** nada. O PR #2 está aberto esperando decisão de merge; o merge para `main` é o que dispara o workflow de APK.
 
 **✅ Fim da Fase E:** produto sem lacuna bloqueante, com rede de proteção automatizada.
 
