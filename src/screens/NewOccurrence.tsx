@@ -8,7 +8,7 @@ import { classifyByText } from '@/lib/classify';
 import { PageTitle } from '@/components/ui';
 import { PhotoUpload } from '@/components/PhotoUpload';
 import { createQueueId, enqueue, isRecoverableSyncError } from '@/lib/offlineQueue';
-import { enviarFotos, gravarAnexos, prepararFotos, type FotoPreparada } from '@/lib/anexos';
+import { enviarArquivos, gravarAnexos, prepararAnexos, type AnexoPreparado } from '@/lib/anexos';
 
 export function NewOccurrence({
   fiscal,
@@ -113,11 +113,11 @@ export function NewOccurrence({
     // O id do registro é gerado aqui, e não pelo banco: é ele que amarra as
     // fotos ao registro antes de qualquer coisa subir (inclusive offline).
     const occurrenceId = createQueueId();
-    let fotosPreparadas: FotoPreparada[];
+    let fotosPreparadas: AnexoPreparado[];
     try {
-      fotosPreparadas = await prepararFotos({
+      fotosPreparadas = await prepararAnexos({
         fiscalId: fiscal.id,
-        fotos: photos,
+        arquivos: photos,
         tipo: 'foto',
         momento: 'antes',
         vinculo: { ocorrencia_id: occurrenceId },
@@ -174,7 +174,7 @@ export function NewOccurrence({
     // é pior que arquivo sem registro. Se o envio falhar por qualquer motivo, a
     // ocorrência inteira vai para a fila — o fiscal não perde o que registrou.
     try {
-      await enviarFotos(fotosPreparadas);
+      await enviarArquivos(fotosPreparadas);
     } catch (uploadError) {
       console.error('Erro ao enviar as fotos da ocorrência:', uploadError);
       try {

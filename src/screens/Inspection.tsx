@@ -9,7 +9,7 @@ import { OCCURRENCE_COLUMNS } from '@/lib/columns';
 import { PageTitle, EmptyState, Badge } from '@/components/ui';
 import { PhotoUpload } from '@/components/PhotoUpload';
 import { createQueueId, enqueueBatch, isRecoverableSyncError } from '@/lib/offlineQueue';
-import { enviarFotos, gravarAnexos, prepararFotos, type FotoPreparada } from '@/lib/anexos';
+import { enviarArquivos, gravarAnexos, prepararAnexos, type AnexoPreparado } from '@/lib/anexos';
 const AutoInfracaoForm = lazy(() => import('@/screens/AutoInfracao').then((module) => ({ default: module.AutoInfracaoForm })));
 
 export function Inspection({ fiscal }: { fiscal: Fiscal | null }) {
@@ -231,11 +231,11 @@ function InspectionForm({
     setMessage('');
 
     const vistoriaId = createQueueId();
-    let fotosPreparadas: FotoPreparada[];
+    let fotosPreparadas: AnexoPreparado[];
     try {
-      fotosPreparadas = await prepararFotos({
+      fotosPreparadas = await prepararAnexos({
         fiscalId: fiscal.id,
-        fotos: photos,
+        arquivos: photos,
         tipo: 'foto_depois',
         momento: 'depois',
         vinculo: { vistoria_id: vistoriaId },
@@ -284,7 +284,7 @@ function InspectionForm({
 
     // Fotos primeiro, pelo mesmo motivo da ocorrência: a vistoria grava caminhos.
     try {
-      await enviarFotos(fotosPreparadas);
+      await enviarArquivos(fotosPreparadas);
     } catch (uploadError) {
       console.error('Erro ao enviar as fotos da vistoria:', uploadError);
       try {

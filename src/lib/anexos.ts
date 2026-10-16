@@ -19,9 +19,12 @@ import {
 } from '@/lib/storage';
 
 /** O vínculo do anexo com o registro. O banco exige exatamente um. */
-export type VinculoFoto = { ocorrencia_id: string } | { vistoria_id: string };
+export type VinculoAnexo =
+  | { ocorrencia_id: string }
+  | { vistoria_id: string }
+  | { auto_infracao_id: string };
 
-export type FotoPreparada = {
+export type AnexoPreparado = {
   id: string;
   path: string;
   dataUrl: string;
@@ -29,20 +32,23 @@ export type FotoPreparada = {
   anexo: Record<string, unknown>;
 };
 
-export type PreparoFotos = {
+export type PreparoAnexos = {
   fiscalId: string;
-  fotos: string[];
+  /** Arquivos em data URL, do jeito que o `PhotoUpload` e o `SignaturePad` produzem. */
+  arquivos: string[];
   tipo: TipoAnexo;
-  momento: Momento;
-  vinculo: VinculoFoto;
+  momento?: Momento | null;
+  vinculo: VinculoAnexo;
+  mime?: string;
+  extensao?: string;
 };
 
-export async function prepararFotos({
-  fiscalId, fotos, tipo, momento, vinculo,
-}: PreparoFotos): Promise<FotoPreparada[]> {
-  return Promise.all(fotos.map(async (dataUrl) => {
+export async function prepararAnexos({
+  fiscalId, arquivos, tipo, momento = null, vinculo, mime = 'image/jpeg', extensao = 'jpg',
+}: PreparoAnexos): Promise<AnexoPreparado[]> {
+  return Promise.all(arquivos.map(async (dataUrl) => {
     const id = createQueueId();
-    const path = buildAnexoPath(fiscalId, id);
+    const path = buildAnexoPath(fiscalId, id, new Date(), extensao);
     const { largura, altura, bytes } = await inspecionarArquivo(dataUrl);
 
     return {
@@ -56,7 +62,7 @@ export async function prepararFotos({
         tipo,
         momento,
         storage_path: path,
-        arquivo_tipo: 'image/jpeg',
+        arquivo_tipo: mime,
         arquivo_bytes: bytes || null,
         largura: largura || null,
         altura: altura || null,
@@ -66,8 +72,8 @@ export async function prepararFotos({
 }
 
 /** Sobe todos os arquivos. Lança se algum falhar — quem chama decide o destino. */
-export async function enviarFotos(fotos: FotoPreparada[]): Promise<void> {
-  await Promise.all(fotos.map((foto) => uploadAnexo(foto.path, foto.dataUrl)));
+export async function enviarArquivos(arquivos: AnexoPreparado[]): Promise<void> {
+  await Promise.all(arquivos.map((arquivo) => uploadAnexo(arquivo.path, arquivo.dataUrl)));
 }
 
 /**
@@ -77,10 +83,10 @@ export async function enviarFotos(fotos: FotoPreparada[]): Promise<void> {
  * está na linha. O que faltaria é a descrição do arquivo, que pode ser
  * recomposta a partir do caminho — por isso o erro é registrado, não propagado.
  */
-export async function gravarAnexos(fotos: FotoPreparada[]): Promise<void> {
-  if (fotos.length === 0) return;
+export async function gravarAnexos(arquivos: AnexoPreparado[]): Promise<void> {
+  if (arquivos.length === 0) return;
   const { error } = await supabase
     .from('anexos')
-    .upsert(fotos.map((foto) => foto.anexo), { onConflict: 'id', ignoreDuplicates: true });
+    .upsert(arquivos.map((arquivo) => arquivo.anexo), { onConflict: 'id', ignoreDuplicates: true });
   if (error) console.error('Fotos gravadas no Storage sem descrição em anexos:', error);
 }

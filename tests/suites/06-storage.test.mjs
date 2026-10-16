@@ -196,5 +196,76 @@ export default {
         `SELECT fotos_depois FROM public.vistorias WHERE id = $1`, [vistoriaId]);
       t.eq(rows[0].fotos_depois, [caminho], 'caminho gravado pelo RPC');
     });
+
+    await t.test('auto de infração guarda o caminho da assinatura', async () => {
+      // A assinatura do autuado era o último arquivo que ainda entrava na linha
+      // por um caminho diferente das fotos: é imagem gerada na tela, não upload.
+      const ocorrencia = await createOccurrence(db, IDS.active);
+      await db.as(IDS.admin, 'authenticated', async () => {
+        await db.query(`SELECT public.assign_occurrence($1, $2)`, [ocorrencia, IDS.active]);
+      });
+
+      const autoId = '88888888-8888-4888-8888-888888888888';
+      const caminho = `${IDS.active}/2026/10/assinatura-do-autuado.png`;
+      await db.as(IDS.active, 'authenticated', async () => {
+        await db.query(
+          `INSERT INTO public.autos_infracao
+             (id, ocorrencia_id, tipo_infracao, artigo_legal, valor_base, valor_multa, motivo,
+              autuado_nome, autuado_documento, ciencia, assinatura_autuado, pagamento, vencimento)
+           VALUES ($1, $2, 'Calçada irregular', 'Lei municipal 15.000/2015', 500, 500,
+                   'Ocupação irregular de calçada impedindo a passagem de pedestres.',
+                   'João da Silva', '12345678900', 'Assinou', $3, 'Pendente', current_date + 30)`,
+          [autoId, ocorrencia, caminho],
+        );
+      });
+
+      const { rows } = await db.owner(
+        `SELECT assinatura_autuado FROM public.autos_infracao WHERE id = $1`, [autoId]);
+      t.eq(rows[0].assinatura_autuado, caminho, 'caminho preservado na coluna');
+    });
+
+    await t.test('assinatura também vira anexo do auto', async () => {
+      const { rows } = await db.as(IDS.active, 'authenticated', async () =>
+        db.query(
+          `INSERT INTO public.anexos
+             (fiscal_id, auto_infracao_id, tipo, storage_path, arquivo_tipo, arquivo_bytes)
+           VALUES ($1, $2, 'assinatura', $3, 'image/png', 14200)
+           RETURNING id, tipo`,
+          [IDS.active, '88888888-8888-4888-8888-888888888888',
+           `${IDS.active}/2026/10/assinatura-do-autuado.png`],
+        ));
+      t.ok(rows[0]?.id, 'anexo da assinatura gravado');
+      t.eq(rows[0].tipo, 'assinatura', 'tipo do anexo');
+
+      const n = await db.owner(
+        `SELECT count(*) AS n FROM public.anexos WHERE auto_infracao_id = $1`,
+        ['88888888-8888-4888-8888-888888888888']);
+      t.count(n.rows[0].n, 1, 'anexos do auto');
+    });
+
+    await t.test('o gatilho recusa assinatura embutida no auto', async () => {
+      // Afirma a MENSAGEM, não só "deu erro": recusa por falta de permissão
+      // também seria um erro, e passaria como se o gatilho tivesse funcionado.
+      let mensagem = '';
+      await db.as(IDS.active, 'authenticated', async () => {
+        try {
+          await db.query(
+            `INSERT INTO public.autos_infracao
+               (ocorrencia_id, tipo_infracao, artigo_legal, valor_base, valor_multa, motivo,
+                autuado_nome, autuado_documento, ciencia, assinatura_autuado, pagamento, vencimento)
+             VALUES ($1, 'Calçada irregular', 'Lei municipal 15.000/2015', 500, 500,
+                     'Ocupação irregular de calçada impedindo a passagem de pedestres.',
+                     'Maria Souza', '98765432100', 'Assinou', $2, 'Pendente', current_date + 30)`,
+            [(await createOccurrence(db, IDS.active)), SAMPLE_PHOTO],
+          );
+        } catch (error) {
+          mensagem = error.message;
+        }
+      });
+      t.ok(
+        mensagem.includes('não aceita arquivo embutido'),
+        `recusado pelo gatilho (mensagem: ${mensagem || 'nenhuma — o insert passou'})`,
+      );
+    });
   },
 };

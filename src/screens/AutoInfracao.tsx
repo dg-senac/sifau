@@ -6,6 +6,7 @@ import { Fiscal, Occurrence, SCIENCE_TYPES } from '@/lib/types';
 import { PageTitle } from '@/components/ui';
 import { SignaturePad } from '@/components/SignaturePad';
 import { createQueueId, enqueue, isRecoverableSyncError } from '@/lib/offlineQueue';
+import { enviarArquivos, gravarAnexos, prepararAnexos, type AnexoPreparado } from '@/lib/anexos';
 
 export function AutoInfracaoForm({
   item,
@@ -53,8 +54,29 @@ export function AutoInfracaoForm({
     setSaving(true);
     setMessage('');
 
+    // A assinatura vai para o bucket; o que fica GRAVADO é o caminho. O PDF do
+    // auto continua sendo montado com a imagem em memória (`generatePdf`), que é
+    // justamente o que o jsPDF precisa.
+    const autoId = createQueueId();
+    let assinatura: AnexoPreparado[] = [];
+    try {
+      assinatura = await prepararAnexos({
+        fiscalId: fiscal.id,
+        arquivos: signature ? [signature] : [],
+        tipo: 'assinatura',
+        vinculo: { auto_infracao_id: autoId },
+        mime: 'image/png',
+        extensao: 'png',
+      });
+    } catch (error) {
+      console.error('Erro ao preparar a assinatura:', error);
+      setMessage('Não foi possível processar a assinatura. Capture novamente.');
+      setSaving(false);
+      return;
+    }
+
     const payload = {
-      id: createQueueId(),
+      id: autoId,
       ocorrencia_id: item.id,
       tipo_infracao: tipoInfracao,
       artigo_legal: artigoLegal.trim() || 'A definir',
@@ -64,13 +86,13 @@ export function AutoInfracaoForm({
       autuado_nome: autuadoNome.trim(),
       autuado_documento: autuadoDocumento.trim(),
       ciencia,
-      assinatura_autuado: signature,
+      assinatura_autuado: assinatura[0]?.path ?? null,
       testemunha_nome: testemunhaNome.trim() || null,
       pagamento: 'Pendente',
       vencimento,
     };
 
-    const queueAuto = () => enqueue('autos_infracao', payload, `Auto de infração: ${autuadoNome}`);
+    const queueAuto = () => enqueue('autos_infracao', payload, `Auto de infração: ${autuadoNome}`, assinatura);
     if (!navigator.onLine) {
       try {
         queueAuto();
@@ -82,6 +104,26 @@ export function AutoInfracaoForm({
         return;
       }
     } else {
+      // A assinatura sobe ANTES da linha, como as fotos: o auto grava o caminho.
+      try {
+        await enviarArquivos(assinatura);
+      } catch (uploadError) {
+        console.error('Erro ao enviar a assinatura do auto:', uploadError);
+        try {
+          queueAuto();
+          setQueuedOffline(true);
+        } catch (queueError) {
+          console.error('Não foi possível guardar o auto neste aparelho:', queueError);
+          setMessage('Não foi possível salvar offline. Libere espaço no aparelho e tente novamente.');
+          setSaving(false);
+          return;
+        }
+        setLastAuto(payload);
+        setSaving(false);
+        setDone(true);
+        return;
+      }
+
       const { error } = await supabase.from('autos_infracao').insert(payload);
       if (error) {
         console.error('Erro ao registrar auto de infração:', error);
@@ -99,6 +141,8 @@ export function AutoInfracaoForm({
           setSaving(false);
           return;
         }
+      } else {
+        await gravarAnexos(assinatura);
       }
     }
 

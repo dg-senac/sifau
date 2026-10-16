@@ -2355,20 +2355,35 @@ AS $$
 DECLARE
   coluna text := TG_ARGV[0];
   valor jsonb := pg_catalog.to_jsonb(NEW);
+  tipo text;
   item text;
 BEGIN
-  IF valor IS NULL OR pg_catalog.jsonb_typeof(valor -> coluna) <> 'array' THEN
+  IF valor IS NULL THEN
     RETURN NEW;
   END IF;
 
-  FOR item IN SELECT pg_catalog.jsonb_array_elements_text(valor -> coluna) LOOP
-    IF item LIKE 'data:%' THEN
+  tipo := pg_catalog.jsonb_typeof(valor -> coluna);
+
+  -- Coluna de lista: cada item é um arquivo (fotos da ocorrência e da vistoria).
+  IF tipo = 'array' THEN
+    FOR item IN SELECT pg_catalog.jsonb_array_elements_text(valor -> coluna) LOOP
+      IF item LIKE 'data:%' THEN
+        RAISE EXCEPTION
+          'A coluna % não aceita arquivo embutido: suba o arquivo para o Storage e grave só o caminho.',
+          coluna
+          USING ERRCODE = '22023';
+      END IF;
+    END LOOP;
+
+  -- Coluna de texto simples: o valor é o arquivo (assinatura do autuado).
+  ELSIF tipo = 'string' THEN
+    IF (valor ->> coluna) LIKE 'data:%' THEN
       RAISE EXCEPTION
         'A coluna % não aceita arquivo embutido: suba o arquivo para o Storage e grave só o caminho.',
         coluna
         USING ERRCODE = '22023';
     END IF;
-  END LOOP;
+  END IF;
 
   RETURN NEW;
 END;
@@ -2391,5 +2406,24 @@ COMMENT ON COLUMN public.vistorias.fotos_depois IS
   'Caminhos das fotos "depois" no bucket sifau-anexos (nunca o arquivo). A descrição de cada arquivo está em public.anexos.';
 COMMENT ON COLUMN public.anexos.storage_path IS
   'Caminho no bucket sifau-anexos: {fiscal_id}/{ano}/{mes}/{anexo_id}.extensao — o arquivo nunca é gravado no banco.';
+
+-- ----------------------------------------------------------------------------
+-- Assinatura do autuado: caminho no lugar do arquivo
+-- ----------------------------------------------------------------------------
+-- `autos_infracao.assinatura_autuado` guardava o PNG da assinatura colhida na
+-- tela, em base64, dentro da linha. A assinatura é gerada como imagem a partir
+-- de um canvas, então o arquivo é pequeno se comparado a uma foto — mas o
+-- princípio é o mesmo das fotos de campo, e a regra precisa ser uma só: arquivo
+-- mora no bucket, banco guarda o caminho.
+--
+-- O aplicativo continua montando o PDF do auto com a imagem em memória (o
+-- jsPDF precisa dos bytes). O que muda é o que fica GRAVADO.
+DROP TRIGGER IF EXISTS trg_autos_assinatura_sem_base64 ON public.autos_infracao;
+CREATE TRIGGER trg_autos_assinatura_sem_base64
+  BEFORE INSERT OR UPDATE OF assinatura_autuado ON public.autos_infracao
+  FOR EACH ROW EXECUTE FUNCTION public.reject_inline_base64('assinatura_autuado');
+
+COMMENT ON COLUMN public.autos_infracao.assinatura_autuado IS
+  'Caminho da assinatura no bucket sifau-anexos (nunca o arquivo). A descrição do arquivo está em public.anexos.';
 
 -- Fim da instalação. Guarde também as migrations em supabase/migrations/.
