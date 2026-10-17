@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>SIFAU — sem conexão</title>
+    <meta name="theme-color" content="#0d428b" />
+    <style>
+      /* Tudo aqui é do próprio arquivo: esta página precisa funcionar sem
+         nenhuma rede, então não carrega fonte, ícone nem folha de estilo. */
+      :root { font-family: 'DM Sans', system-ui, sans-serif; color: #172b4d; background: #f5f8fc; }
+      * { box-sizing: border-box; }
+      body { margin: 0; min-height: 100vh; display: flex; flex-direction: column; align-items: center;
+             justify-content: center; padding: 32px 20px; background: linear-gradient(160deg, #f7fbff 0%, #eaf3ff 100%); }
+      main { width: min(100%, 420px); background: #fff; border: 1px solid #dfeaf6; border-radius: 18px;
+             padding: 26px 22px; box-shadow: 0 16px 38px rgba(32, 76, 130, .08); text-align: center; }
+      h1 { font-size: 21px; color: #183a67; margin: 18px 0 8px; }
+      p { margin: 0 0 14px; font-size: 13px; line-height: 1.6; color: #47617f; }
+      ol { text-align: left; margin: 0 0 18px; padding-left: 20px; font-size: 13px; line-height: 1.7; color: #47617f; }
+      .aviso { display: flex; gap: 9px; align-items: flex-start; text-align: left; background: #fff7e9;
+               border: 1px solid #f0d9a8; border-radius: 11px; padding: 11px 12px; margin-bottom: 18px; }
+      .aviso span { font-size: 12px; line-height: 1.5; color: #8a5c18; }
+      button { width: 100%; min-height: 48px; border: 0; border-radius: 11px; background: #1766d1; color: #fff;
+               font-family: inherit; font-size: 14px; font-weight: 700; cursor: pointer; }
+      button:hover { background: #0e55b3; }
+      footer { margin-top: 20px; font-size: 11px; color: #89a0bb; text-align: center; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <svg viewBox="0 0 110 110" width="110" height="110" role="img" aria-label="SIFAU">
+        <defs>
+          <linearGradient id="marca" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="64" y2="64">
+            <stop offset="0" stop-color="#1569db"/>
+            <stop offset="1" stop-color="#07357d"/>
+          </linearGradient>
+          <clipPath id="recorte"><path d="M32 9.6 51 17.1v16.3c0 11.4-8.1 19.8-19 24-10.9-4.2-19-12.6-19-24V17.1z"/></clipPath>
+        </defs>
+        <g transform="translate(55 55) scale(2.0084) translate(-32 -33.5)">
+          <path d="M32 9.6 51 17.1v16.3c0 11.4-8.1 19.8-19 24-10.9-4.2-19-12.6-19-24V17.1z" fill="url(#marca)"/>
+          <g clip-path="url(#recorte)">
+            <path d="M13.6 23.6H50.4" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M22.6 34.2 29.4 41 42 28.2" fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+          </g>
+        </g>
+      </svg>
+      <h1>Sem conexão com a internet</h1>
+      <p>
+        Este aparelho ainda não guardou os arquivos do SIFAU, então o aplicativo não
+        consegue abrir agora.
+      </p>
+      <ol>
+        <li>Verifique se o celular está com dados móveis ou wi-fi.</li>
+        <li>Toque em "Tentar de novo".</li>
+      </ol>
+      <div class="aviso">
+        <span>
+          <b>Nada foi perdido.</b> Os registros que você fez e ainda não foram enviados
+          continuam guardados neste aparelho; eles sobem quando a conexão voltar.
+        </span>
+      </div>
+      <button onclick="location.replace('./')">Tentar de novo</button>
+    </main>
+    <footer>SIFAU — Fiscalização urbana inteligente</footer>
+  </body>
+</html>

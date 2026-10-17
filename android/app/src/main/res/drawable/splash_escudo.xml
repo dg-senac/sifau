@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Gerado por `npm run marca:android` — a fonte é src/lib/marca.ts. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="96dp"
+    android:height="96dp"
+    android:viewportWidth="96"
+    android:viewportHeight="96">
+    <group
+        android:translateX="48.000"
+        android:translateY="48.000"
+        android:scaleX="1.4226"
+        android:scaleY="1.4226">
+        <group
+            android:translateX="-32"
+            android:translateY="-33.5">
+            <path
+                android:pathData="M32 9.6 51 17.1v16.3c0 11.4-8.1 19.8-19 24-10.9-4.2-19-12.6-19-24V17.1z"
+                android:strokeColor="#FFFFFF"
+                android:strokeWidth="5.4"
+                android:strokeLineJoin="round" />
+            <path
+                android:pathData="M22.6 34.2 29.4 41 42 28.2"
+                android:strokeColor="#FFFFFF"
+                android:strokeWidth="5.4"
+                android:strokeLineCap="round"
+                android:strokeLineJoin="round" />
+        </group>
+    </group>
+</vector>

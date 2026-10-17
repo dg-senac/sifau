@@ -26,5 +26,11 @@
     "noUnusedParameters": false,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src"]
+  "include": ["src"],
+  /*
+   * O service worker é conferido pelo tsconfig.worker.json, que usa as
+   * bibliotecas de trabalhador (sem `window`). Deixá-lo aqui faria a checagem
+   * de tipos misturar dois ambientes diferentes.
+   */
+  "exclude": ["src/service-worker.ts"]
 }

@@ -13,7 +13,10 @@
 
 Não rode o SQL completo em um banco já populado. Aplique apenas as migrations pendentes em ordem. A migration `20261012090000_harden_access_and_audit.sql` ativa o fluxo de aprovação, restringe acesso às tabelas, corrige operações de vistoria/redistribuição e registra alterações por trigger. Faça backup e teste em staging antes de produção.
 
-A cópia opcional em `project/` acrescenta a galeria de documentos. Use apenas se optar por essa versão e aplique também `project/supabase/migrations/20261012100000_harden_documents.sql`.
+A galeria de documentos faz parte da aplicação principal e é criada pelas migrations
+`20260930130000_add_documents.sql` e `20261012100000_harden_documents.sql`, ambas já
+incluídas em [`supabase/SETUP_COMPLETO.sql`](supabase/SETUP_COMPLETO.sql). Não há mais
+cópia separada do app.
 
 ## 2. Cadastro, aprovação e permissões
 

@@ -26,7 +26,12 @@ export type Occurrence = {
   created_at: string;
   fiscal_registrou: string;
   fiscal_designado?: string | null;
-  fotos: string[];
+  /**
+   * Fotos da ocorrência, em base64. Presente apenas em consultas que pedem a
+   * coluna de propósito — as telas de lista e de detalhe não a solicitam, e
+   * nenhuma tela exibe esse conteúdo hoje. Ver `lib/columns.ts`.
+   */
+  fotos?: string[];
 };
 
 export type Vistoria = {
@@ -40,7 +45,11 @@ export type Vistoria = {
   acao_tomada: string;
   valor_multa: number | null;
   numero_processo: string | null;
-  fotos_depois: string[];
+  /**
+   * Fotos "depois", em base64. Só existe em consultas que pedem a coluna de
+   * propósito; não é exibida em nenhuma tela. Ver `lib/columns.ts`.
+   */
+  fotos_depois?: string[];
   created_at: string;
 };
 
@@ -87,7 +96,11 @@ export type AutoInfracao = {
   motivo: string;
   autuado_nome: string;
   autuado_documento: string;
-  assinatura_autuado: string | null;
+  /**
+   * Assinatura manuscrita do autuado, em base64. Não é exibida na listagem de
+   * autos e só vem em consultas que pedem a coluna de propósito.
+   */
+  assinatura_autuado?: string | null;
   ciencia: (typeof SCIENCE_TYPES)[number];
   testemunha_nome: string | null;
   pagamento: (typeof PAYMENT_STATUSES)[number];
@@ -159,6 +172,44 @@ export const OS_ORIGINS = ['Preventiva', 'Denúncia', 'Ofício', 'Comunicação 
 export const SCIENCE_TYPES = ['Assinou', 'Recusou', 'Ausente'] as const;
 export const PAYMENT_STATUSES = ['Pendente', 'Pago', 'Cancelado'] as const;
 
+export const DOCUMENT_TYPES = ['foto', 'assinatura', 'documento', 'relatorio', 'auto_infracao'] as const;
+
+export type Documento = {
+  id: string;
+  fiscal_id: string;
+  ocorrencia_id: string | null;
+  vistoria_id: string | null;
+  ordem_servico_id: string | null;
+  tipo_documento: (typeof DOCUMENT_TYPES)[number];
+  titulo: string | null;
+  descricao: string | null;
+  /** Caminho do arquivo no bucket sifau-anexos — o arquivo não mora no banco. */
+  arquivo_path: string;
+  arquivo_nome: string | null;
+  arquivo_tipo: string | null;
+  arquivo_tamanho: number | null;
+  ordem: number;
+  metadados: Record<string, unknown>;
+  criado_em: string;
+  atualizado_em: string;
+};
+
+export type AssinaturaDigital = {
+  id: string;
+  fiscal_id: string;
+  documento_id: string | null;
+  assinatura_data: string;
+  certificado_digital: string | null;
+  certificado_valido: boolean;
+  certificado_emissor: string | null;
+  certificado_validade_inicio: string | null;
+  certificado_validade_fim: string | null;
+  hash_documento: string | null;
+  ip_address: string | null;
+  dispositivo_info: Record<string, unknown>;
+  criado_em: string;
+};
+
 export type Screen =
   | 'home'
   | 'new'
@@ -172,4 +223,5 @@ export type Screen =
   | 'notifications'
   | 'messages'
   | 'map'
+  | 'documents'
   | 'admin';

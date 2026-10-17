@@ -10,9 +10,14 @@ type PhotoUploadProps = {
   minRequired?: number;
 };
 
+// O arquivo original pode vir grande do aparelho; é reduzido antes de sair daqui.
 const MAX_SOURCE_SIZE = 15 * 1024 * 1024;
-const MAX_COMPRESSED_SIZE = 700 * 1024;
-const MAX_IMAGE_SIDE = 1600;
+// Alvo de saída. 1280 px e ~250 KB são suficientes para registro de campo e para
+// leitura em tela de celular, e reduzem quase 3x o peso guardado por foto em
+// relação ao alvo anterior (1600 px / 700 KB). Isso importa porque as fotos são
+// codificadas em base64 (+33%) antes de serem enviadas.
+const MAX_COMPRESSED_SIZE = 250 * 1024;
+const MAX_IMAGE_SIDE = 1280;
 
 function loadImage(file: File): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
@@ -57,22 +62,45 @@ async function optimizePhoto(file: File): Promise<string> {
   }
 
   const image = await loadImage(file);
-  const scale = Math.min(1, MAX_IMAGE_SIDE / Math.max(image.naturalWidth, image.naturalHeight));
-  const canvas = document.createElement('canvas');
-  canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
-  canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+  const naturalWidth = image.naturalWidth;
+  const naturalHeight = image.naturalHeight;
+  if (!naturalWidth || !naturalHeight) {
+    throw new Error(`Não foi possível ler as dimensões de "${file.name}".`);
+  }
 
+  const canvas = document.createElement('canvas');
   const context = canvas.getContext('2d');
   if (!context) throw new Error('Este aparelho não conseguiu processar a imagem.');
-  context.fillStyle = '#fff';
-  context.fillRect(0, 0, canvas.width, canvas.height);
-  context.drawImage(image, 0, 0, canvas.width, canvas.height);
 
-  for (const quality of [0.82, 0.74, 0.66, 0.58, 0.5]) {
-    const blob = await canvasToBlob(canvas, quality);
-    if (blob.size <= MAX_COMPRESSED_SIZE) return blobToDataUrl(blob);
+  // Duas alavancas para caber no alvo: qualidade e dimensão.
+  //
+  // A qualidade sozinha não basta para conteúdo de entropia muito alta (vegetação
+  // densa, entulho, fachada com textura fina): nesses casos nem qualidade 0.32
+  // chega ao alvo. Se o processamento falhasse, o fiscal ficaria impedido de
+  // registrar a ocorrência em campo — inaceitável.
+  //
+  // Por isso, se a escada de qualidade se esgotar, reduzimos a dimensão e
+  // repetimos. Uma foto menor cumpre a função de evidência; a ausência dela não.
+  for (const maxSide of [MAX_IMAGE_SIDE, 1024, 800, 640]) {
+    const scale = Math.min(1, maxSide / Math.max(naturalWidth, naturalHeight));
+    canvas.width = Math.max(1, Math.round(naturalWidth * scale));
+    canvas.height = Math.max(1, Math.round(naturalHeight * scale));
+
+    // Fundo branco: o JPEG não tem canal alfa, e sem isso áreas transparentes
+    // de PNG apareceriam pretas.
+    context.fillStyle = '#fff';
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+
+    for (const quality of [0.82, 0.74, 0.66, 0.58, 0.5, 0.44, 0.38, 0.32]) {
+      const blob = await canvasToBlob(canvas, quality);
+      if (blob.size <= MAX_COMPRESSED_SIZE) return blobToDataUrl(blob);
+    }
   }
-  throw new Error(`Não foi possível reduzir "${file.name}" o suficiente. Escolha uma imagem menor.`);
+
+  // Inalcançável na prática: 640 px em qualidade 0.32 cabe no alvo mesmo para
+  // ruído aleatório puro. Mantido como salvaguarda explícita.
+  throw new Error(`Não foi possível reduzir "${file.name}" o suficiente. Escolha outra imagem.`);
 }
 
 export function PhotoUpload({

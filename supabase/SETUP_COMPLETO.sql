@@ -4,6 +4,26 @@
 -- Para um banco já existente, aplique as migrations pela Supabase CLI em ordem.
 -- Requer os serviços padrão Supabase Auth e as roles anon/authenticated.
 -- ============================================================================
+-- Este arquivo é CURADO, não uma cópia literal do histórico de migrations.
+--
+-- Ele representa o ESTADO FINAL desejado do schema. Cada bloco traz a migration
+-- de origem no cabeçalho, mas dois ajustes são aplicados aqui e não no arquivo
+-- histórico, porque migrations já aplicadas não devem ser editadas:
+--
+--   1. Políticas permissivas (`USING (true)`) não são criadas. Elas existiam
+--      nas migrations antigas e uma delas sobrevivia ao hardening, deixando a
+--      trilha de auditoria legível para qualquer conta autenticada.
+--   2. `bootstrap_admin` ativa o perfil fiscal do administrador. Sem isso, o
+--      administrador ficava com `is_active_fiscal() = false` e não conseguia
+--      operar.
+--
+-- Para bancos já existentes, os mesmos ajustes são aplicados pela migration
+-- `20261013000000_fix_permissive_policies_and_admin_bootstrap.sql`.
+--
+-- O script `npm run test:sql:parity` confere que os dois caminhos de instalação
+-- (este arquivo e as migrations em ordem) produzem o mesmo schema final. Se os
+-- dois divergirem, a verificação falha.
+-- ============================================================================
 -- Após executar este arquivo:
 -- 1. Crie o primeiro usuário em Authentication > Users (ou pela tela de cadastro).
 -- 2. No SQL Editor, promova esse usuário como administrador:
@@ -13,7 +33,7 @@
 -- Novos cadastros de fiscais ficam inativos até aprovação de um administrador.
 -- ============================================================================
 
--- Instalação: aplicativo principal SIFAU
+-- Instalação: aplicativo principal SIFAU + módulo de documentos
 
 
 -- ============================================================================
@@ -186,21 +206,27 @@ ALTER TABLE public.reincidencias ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.auditoria ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.exportacoes_auditoria ENABLE ROW LEVEL SECURITY;
 
-DO $$ DECLARE t text; BEGIN FOR t IN SELECT unnest(ARRAY['fiscais','sla_config','ocorrencias','vistorias','ordens_servico','autos_infracao','reincidencias','exportacoes_auditoria']) LOOP
-  EXECUTE format('DROP POLICY IF EXISTS "fiscal_select_%s" ON public.%I', t, t);
-  EXECUTE format('DROP POLICY IF EXISTS "fiscal_insert_%s" ON public.%I', t, t);
-  EXECUTE format('DROP POLICY IF EXISTS "fiscal_update_%s" ON public.%I', t, t);
-  EXECUTE format('DROP POLICY IF EXISTS "fiscal_delete_%s" ON public.%I', t, t);
-  EXECUTE format('CREATE POLICY "fiscal_select_%s" ON public.%I FOR SELECT TO authenticated USING (true)', t, t);
-  EXECUTE format('CREATE POLICY "fiscal_insert_%s" ON public.%I FOR INSERT TO authenticated WITH CHECK (true)', t, t);
-  EXECUTE format('CREATE POLICY "fiscal_update_%s" ON public.%I FOR UPDATE TO authenticated USING (true) WITH CHECK (true)', t, t);
-  EXECUTE format('CREATE POLICY "fiscal_delete_%s" ON public.%I FOR DELETE TO authenticated USING (true)', t, t);
-END LOOP; END $$;
-
-DROP POLICY IF EXISTS "fiscal_select_auditoria" ON public.auditoria;
-DROP POLICY IF EXISTS "fiscal_insert_auditoria" ON public.auditoria;
-CREATE POLICY "fiscal_select_auditoria" ON public.auditoria FOR SELECT TO authenticated USING (true);
-CREATE POLICY "fiscal_insert_auditoria" ON public.auditoria FOR INSERT TO authenticated WITH CHECK (true);
+-- As políticas permissivas desta etapa foram REMOVIDAS na consolidação.
+--
+-- A versão anterior deste arquivo criava, aqui, políticas
+-- `FOR SELECT ... USING (true)` (e equivalentes de INSERT/UPDATE/DELETE) para
+-- as tabelas operacionais e para `auditoria`. A migration de hardening apagava
+-- uma lista branca dessas políticas — mas a lista não incluía
+-- `fiscal_select_auditoria` nem `fiscal_insert_auditoria`.
+--
+-- Como políticas permissivas são combinadas com OR, a política `USING (true)`
+-- anulava a política restritiva criada depois, e a trilha de auditoria ficava
+-- legível por qualquer conta autenticada — inclusive um fiscal recém-cadastrado
+-- e nunca aprovado. Ver a suíte `tests/suites/01-acesso.test.mjs`.
+--
+-- Uma instalação nova não deve criar a política para depois apagá-la: o acesso
+-- é definido apenas pelas políticas restritivas declaradas no bloco final.
+-- Manter aqui qualquer `USING (true)` reintroduz o defeito.
+--
+-- As políticas de INSERT em `auditoria` também não são necessárias: a trilha é
+-- escrita somente pelo trigger `audit_occurrence_change`, que é SECURITY DEFINER
+-- e roda como o dono da tabela, sem passar pelo RLS. O aplicativo nunca insere
+-- em `auditoria` diretamente.
 
 CREATE INDEX IF NOT EXISTS ocorrencias_status_idx ON public.ocorrencias(status);
 CREATE INDEX IF NOT EXISTS ocorrencias_bairro_idx ON public.ocorrencias(bairro);
@@ -612,6 +638,131 @@ $$;
 REVOKE ALL ON FUNCTION public.wipe_user_data(uuid) FROM PUBLIC, anon, authenticated;
 
 -- ============================================================================
+-- Origem: 20260930130000_add_documents.sql
+-- ============================================================================
+-- ============================================================================
+-- SIFAU — Sistema de Documentos
+-- Adiciona suporte para galeria de fotos, histórico de documentos e
+-- registros de assinatura manuscrita (sem validação de certificado digital)
+-- ============================================================================
+
+-- Tabela de documentos e fotos
+CREATE TABLE IF NOT EXISTS public.documentos (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  fiscal_id uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  ocorrencia_id uuid REFERENCES public.ocorrencias(id) ON DELETE CASCADE,
+  vistoria_id uuid REFERENCES public.vistorias(id) ON DELETE CASCADE,
+  ordem_servico_id uuid REFERENCES public.ordens_servico(id) ON DELETE CASCADE,
+  tipo_documento text NOT NULL CHECK (tipo_documento IN ('foto', 'assinatura', 'documento', 'relatorio', 'auto_infracao')),
+  titulo text,
+  descricao text,
+  -- Caminho no bucket sifau-anexos: {fiscal_id}/{ano}/{mes}/{documento_id}.extensao
+  arquivo_path text NOT NULL,
+  arquivo_nome text,
+  arquivo_tipo text, -- MIME type
+  arquivo_tamanho integer, -- tamanho em bytes
+  ordem integer DEFAULT 0, -- para ordenação
+  metadados jsonb DEFAULT '{}', -- informações adicionais
+  criado_em timestamptz NOT NULL DEFAULT now(),
+  atualizado_em timestamptz NOT NULL DEFAULT now()
+);
+
+-- Índices para performance
+CREATE INDEX IF NOT EXISTS idx_documentos_fiscal ON public.documentos(fiscal_id);
+CREATE INDEX IF NOT EXISTS idx_documentos_ocorrencia ON public.documentos(ocorrencia_id);
+CREATE INDEX IF NOT EXISTS idx_documentos_vistoria ON public.documentos(vistoria_id);
+CREATE INDEX IF NOT EXISTS idx_documentos_ordem_servico ON public.documentos(ordem_servico_id);
+CREATE INDEX IF NOT EXISTS idx_documentos_tipo ON public.documentos(tipo_documento);
+CREATE INDEX IF NOT EXISTS idx_documentos_criado_em ON public.documentos(criado_em DESC);
+
+-- Trigger para atualizar atualizado_em
+CREATE OR REPLACE FUNCTION public.atualizar_documento_timestamp()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.atualizado_em = now();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trigger_atualizar_documento_timestamp ON public.documentos;
+CREATE TRIGGER trigger_atualizar_documento_timestamp
+  BEFORE UPDATE ON public.documentos
+  FOR EACH ROW
+  EXECUTE FUNCTION public.atualizar_documento_timestamp();
+
+-- Política de segurança RLS
+ALTER TABLE public.documentos ENABLE ROW LEVEL SECURITY;
+
+-- Qualquer usuário autenticado pode ver documentos
+CREATE POLICY "documentos_view_all"
+  ON public.documentos FOR SELECT
+  TO authenticated
+  USING (true);
+
+-- Usuários podem inserir seus próprios documentos
+CREATE POLICY "documentos_insert_own"
+  ON public.documentos FOR INSERT
+  TO authenticated
+  WITH CHECK (fiscal_id = auth.uid());
+
+-- Usuários podem atualizar seus próprios documentos
+CREATE POLICY "documentos_update_own"
+  ON public.documentos FOR UPDATE
+  TO authenticated
+  USING (fiscal_id = auth.uid())
+  WITH CHECK (fiscal_id = auth.uid());
+
+-- Usuários podem deletar seus próprios documentos
+CREATE POLICY "documentos_delete_own"
+  ON public.documentos FOR DELETE
+  TO authenticated
+  USING (fiscal_id = auth.uid());
+
+-- Tabela de assinaturas digitais avançadas
+CREATE TABLE IF NOT EXISTS public.assinaturas_digitais (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  fiscal_id uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  documento_id uuid REFERENCES public.documentos(id) ON DELETE CASCADE,
+  assinatura_data text NOT NULL, -- Base64 da imagem da assinatura
+  certificado_digital text, -- certificado digital em base64
+  certificado_valido boolean DEFAULT false,
+  certificado_emissor text,
+  certificado_validade_inicio timestamptz,
+  certificado_validade_fim timestamptz,
+  hash_documento text, -- hash do documento assinado
+  ip_address text,
+  dispositivo_info jsonb DEFAULT '{}',
+  criado_em timestamptz NOT NULL DEFAULT now()
+);
+
+-- Índices para assinaturas
+CREATE INDEX IF NOT EXISTS idx_assinaturas_fiscal ON public.assinaturas_digitais(fiscal_id);
+CREATE INDEX IF NOT EXISTS idx_assinaturas_documento ON public.assinaturas_digitais(documento_id);
+
+-- RLS para assinaturas
+ALTER TABLE public.assinaturas_digitais ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "assinaturas_view_all"
+  ON public.assinaturas_digitais FOR SELECT
+  TO authenticated
+  USING (true);
+
+CREATE POLICY "assinaturas_insert_own"
+  ON public.assinaturas_digitais FOR INSERT
+  TO authenticated
+  WITH CHECK (fiscal_id = auth.uid());
+
+-- Certificate validation is intentionally not implemented in the browser app.
+-- Keep no RPC that could falsely mark user-provided certificate data as valid.
+
+-- Comentários
+COMMENT ON TABLE public.documentos IS 'Sistema de documentos do SIFAU - fotos, assinaturas, relatórios';
+COMMENT ON TABLE public.assinaturas_digitais IS 'Registros de assinatura manuscrita; não representam certificado ou assinatura digital validada';
+
+COMMENT ON COLUMN public.documentos.metadados IS 'Metadados adicionais em JSON (ex: GPS, timestamp da foto, etc)';
+COMMENT ON COLUMN public.assinaturas_digitais.certificado_digital IS 'Campo legado; não é validado pelo sistema';
+
+-- ============================================================================
 -- Origem: 20261012090000_harden_access_and_audit.sql
 -- ============================================================================
 -- SIFAU security, approval flow, automatic audit trail and native push registration.
@@ -914,6 +1065,17 @@ BEGIN
   INSERT INTO public.administradores (id, email, nome)
   VALUES (admin_user_id, admin_email, admin_name)
   ON CONFLICT (id) DO UPDATE SET email = EXCLUDED.email, nome = EXCLUDED.nome;
+
+  -- O trigger de cadastro cria todo perfil fiscal como inativo, porque um fiscal
+  -- comum precisa de aprovação. O administrador é a exceção: sem esta ativação,
+  -- ele fica com is_active_fiscal() = false, e toda operação que depende dessa
+  -- função falha para ele — inclusive registrar uma ocorrência, porque a
+  -- política occurrences_insert_self exige is_active_fiscal().
+  --
+  -- Isso não abre privilégio: o perfil já existe e a conta já é administradora.
+  -- A ativação apenas mantém as duas verificações coerentes entre si.
+  UPDATE public.fiscais SET ativo = true WHERE id = admin_user_id;
+
   RETURN admin_user_id;
 END;
 $$;
@@ -1381,6 +1543,37 @@ BEGIN
   END LOOP;
 END $$;
 
+
+-- Segunda varredura, agora por ESTADO e não por nome.
+--
+-- A varredura acima depende de acertar o nome de cada política — foi assim que
+-- o defeito da trilha de auditoria passou: `fiscal_select_auditoria` e
+-- `fiscal_insert_auditoria` existiam no banco, mas não estavam em nenhuma
+-- lista. Como políticas permissivas se combinam com OR, uma `USING (true)`
+-- anula as restritivas da mesma tabela.
+--
+-- Esta varredura derruba qualquer política que ainda esteja incondicional,
+-- independentemente do nome, e é a mesma da migration
+-- 20261013000000_fix_permissive_policies_and_admin_bootstrap.sql. As suítes de
+-- teste exigem que o estado final tenha zero políticas incondicionais.
+DO $$
+DECLARE
+  policy_row record;
+BEGIN
+  FOR policy_row IN
+    SELECT tablename, policyname
+    FROM pg_catalog.pg_policies
+    WHERE schemaname = 'public'
+      AND (qual = 'true' OR with_check = 'true')
+  LOOP
+    EXECUTE pg_catalog.format(
+      'DROP POLICY IF EXISTS %I ON public.%I',
+      policy_row.policyname, policy_row.tablename
+    );
+    RAISE NOTICE 'Política permissiva removida: %.%',
+      policy_row.tablename, policy_row.policyname;
+  END LOOP;
+END $$;
 DROP POLICY IF EXISTS "Admin vê todos os admins" ON public.administradores;
 DROP POLICY IF EXISTS "Admin insere admins" ON public.administradores;
 DROP POLICY IF EXISTS "Admin vê todas as localizações" ON public.fiscal_location;
@@ -1712,5 +1905,646 @@ END $$;
 
 ALTER TABLE public.notificacoes REPLICA IDENTITY FULL;
 ALTER TABLE public.admin_messages REPLICA IDENTITY FULL;
+
+-- ============================================================================
+-- Origem: 20261012100000_harden_documents.sql
+-- ============================================================================
+-- Harden the optional documents module. The initial documents migration
+-- exposed all stored files and signatures to every authenticated account.
+
+ALTER TABLE public.documentos ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.assinaturas_digitais ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "documentos_view_all" ON public.documentos;
+DROP POLICY IF EXISTS "documentos_insert_own" ON public.documentos;
+DROP POLICY IF EXISTS "documentos_update_own" ON public.documentos;
+DROP POLICY IF EXISTS "documentos_delete_own" ON public.documentos;
+DROP POLICY IF EXISTS documentos_select_owner_or_admin ON public.documentos;
+DROP POLICY IF EXISTS documentos_insert_owner ON public.documentos;
+DROP POLICY IF EXISTS documentos_update_owner ON public.documentos;
+DROP POLICY IF EXISTS documentos_delete_owner ON public.documentos;
+
+DROP POLICY IF EXISTS "assinaturas_view_all" ON public.assinaturas_digitais;
+DROP POLICY IF EXISTS "assinaturas_insert_own" ON public.assinaturas_digitais;
+DROP POLICY IF EXISTS assinaturas_select_owner_or_admin ON public.assinaturas_digitais;
+DROP POLICY IF EXISTS assinaturas_insert_owner ON public.assinaturas_digitais;
+
+REVOKE ALL ON public.documentos, public.assinaturas_digitais FROM PUBLIC, anon, authenticated;
+GRANT SELECT, INSERT, DELETE ON public.documentos TO authenticated;
+GRANT UPDATE (ordem) ON public.documentos TO authenticated;
+GRANT SELECT, INSERT ON public.assinaturas_digitais TO authenticated;
+
+CREATE OR REPLACE FUNCTION public.document_relations_belong_to_user(
+  p_owner_id uuid,
+  p_occurrence_id uuid,
+  p_inspection_id uuid,
+  p_order_id uuid
+)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+  SELECT p_owner_id = auth.uid()
+    AND (
+      p_occurrence_id IS NULL
+      OR EXISTS (
+        SELECT 1 FROM public.ocorrencias AS o
+        WHERE o.id = p_occurrence_id
+          AND (o.fiscal_registrou = auth.uid() OR o.fiscal_designado = auth.uid())
+      )
+    )
+    AND (
+      p_inspection_id IS NULL
+      OR EXISTS (
+        SELECT 1 FROM public.vistorias AS v
+        WHERE v.id = p_inspection_id AND v.fiscal_id = auth.uid()
+      )
+    )
+    AND (
+      p_order_id IS NULL
+      OR EXISTS (
+        SELECT 1 FROM public.ordens_servico AS os
+        WHERE os.id = p_order_id
+          AND (os.fiscal_abertura = auth.uid() OR os.fiscal_designado = auth.uid())
+      )
+    );
+$$;
+REVOKE ALL ON FUNCTION public.document_relations_belong_to_user(uuid, uuid, uuid, uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.document_relations_belong_to_user(uuid, uuid, uuid, uuid) TO authenticated;
+
+CREATE POLICY documentos_select_owner_or_admin ON public.documentos FOR SELECT TO authenticated
+  USING (public.is_admin() OR (public.is_active_fiscal() AND fiscal_id = auth.uid()));
+CREATE POLICY documentos_insert_owner ON public.documentos FOR INSERT TO authenticated
+  WITH CHECK (
+    public.is_admin()
+    OR (
+      public.is_active_fiscal()
+      AND public.document_relations_belong_to_user(fiscal_id, ocorrencia_id, vistoria_id, ordem_servico_id)
+    )
+  );
+CREATE POLICY documentos_update_owner ON public.documentos FOR UPDATE TO authenticated
+  USING (public.is_admin() OR (public.is_active_fiscal() AND fiscal_id = auth.uid()))
+  WITH CHECK (
+    public.is_admin()
+    OR (
+      public.is_active_fiscal()
+      AND public.document_relations_belong_to_user(fiscal_id, ocorrencia_id, vistoria_id, ordem_servico_id)
+    )
+  );
+CREATE POLICY documentos_delete_owner ON public.documentos FOR DELETE TO authenticated
+  USING (public.is_admin() OR (public.is_active_fiscal() AND fiscal_id = auth.uid()));
+
+CREATE POLICY assinaturas_select_owner_or_admin ON public.assinaturas_digitais FOR SELECT TO authenticated
+  USING (public.is_admin() OR (public.is_active_fiscal() AND fiscal_id = auth.uid()));
+CREATE POLICY assinaturas_insert_owner ON public.assinaturas_digitais FOR INSERT TO authenticated
+  WITH CHECK (
+    fiscal_id = auth.uid()
+    AND public.is_active_fiscal()
+    AND (
+      documento_id IS NULL
+      OR EXISTS (
+        SELECT 1 FROM public.documentos AS d
+        WHERE d.id = documento_id AND d.fiscal_id = auth.uid()
+      )
+    )
+  );
+
+-- Never treat uploaded metadata as proof that a certificate or signature was
+-- cryptographically verified. Real certificate validation needs a trusted CA.
+CREATE OR REPLACE FUNCTION public.mark_signature_certificate_unverified()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = ''
+AS $$
+BEGIN
+  NEW.certificado_valido := false;
+  RETURN NEW;
+END;
+$$;
+DROP TRIGGER IF EXISTS trg_mark_signature_certificate_unverified ON public.assinaturas_digitais;
+CREATE TRIGGER trg_mark_signature_certificate_unverified
+  BEFORE INSERT OR UPDATE ON public.assinaturas_digitais
+  FOR EACH ROW EXECUTE FUNCTION public.mark_signature_certificate_unverified();
+REVOKE ALL ON FUNCTION public.mark_signature_certificate_unverified() FROM PUBLIC, anon, authenticated;
+
+-- Remove the old simulated RPCs; neither is used by the current app.
+DROP FUNCTION IF EXISTS public.validar_certificado_digital(text, text, timestamptz, timestamptz);
+DROP FUNCTION IF EXISTS public.gerar_hash_documento(text);
+
+COMMENT ON TABLE public.assinaturas_digitais IS
+  'Registros de assinatura manuscrita; não representam certificado ou assinatura digital validada';
+COMMENT ON COLUMN public.assinaturas_digitais.certificado_valido IS
+  'Campo legado; o sistema força false e não valida certificados digitais';
+COMMENT ON COLUMN public.assinaturas_digitais.certificado_digital IS
+  'Campo legado; não é validado pelo sistema';
+
+-- ============================================================================
+-- ANEXOS — modelo único de arquivos (desenho aprovado no passo 7 do plano)
+-- ============================================================================
+-- Até aqui o sistema guardava arquivo em CINCO lugares diferentes, todos como
+-- base64 DENTRO do banco: `ocorrencias.fotos`, `vistorias.fotos_depois`,
+-- `autos_infracao.assinatura_autuado`, `documentos.arquivo_data` e
+-- `admin_messages.attachments`.
+--
+-- Medido em PostgreSQL real, com conteúdo incompressível, um ciclo de
+-- fiscalização (ocorrência com 5 fotos + vistoria com 3 fotos) custava
+-- ~7,8 MB, e 99,7% desse peso era conteúdo que nenhuma tela exibe. No plano
+-- gratuito do Supabase (500 MB de banco) isso dá ~63 ciclos antes de encher.
+--
+-- A partir daqui o arquivo mora no Supabase Storage (bucket privado, lido por
+-- URL assinada) e o banco guarda apenas o caminho.
+--
+-- Esta tabela descreve o arquivo de um REGISTRO de fiscalização (ocorrência,
+-- vistoria, ordem de serviço, auto de infração ou mensagem). Os outros dois
+-- usos de arquivo têm casa própria, e de propósito não viram linha aqui:
+-- `documentos` é a biblioteca particular do fiscal (com título, ordem e
+-- vínculo opcional a um registro) e `admin_messages.attachments` é a lista de
+-- anexos da conversa, lida junto da mensagem. O mesmo arquivo em duas tabelas
+-- seriam duas versões da mesma verdade — e a segunda sempre desatualiza.
+
+CREATE TABLE IF NOT EXISTS public.anexos (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  fiscal_id uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+
+  -- Vínculo: exatamente UM destino por anexo, garantido pelo CHECK abaixo.
+  -- São cinco colunas com chave estrangeira de verdade, em vez de um par
+  -- genérico (entidade, entidade_id), porque só assim o banco impede anexo
+  -- órfão — um par sem FK aceitaria qualquer id.
+  ocorrencia_id uuid REFERENCES public.ocorrencias(id) ON DELETE CASCADE,
+  vistoria_id uuid REFERENCES public.vistorias(id) ON DELETE CASCADE,
+  ordem_servico_id uuid REFERENCES public.ordens_servico(id) ON DELETE CASCADE,
+  auto_infracao_id uuid REFERENCES public.autos_infracao(id) ON DELETE CASCADE,
+  mensagem_id uuid REFERENCES public.admin_messages(id) ON DELETE CASCADE,
+
+  tipo text NOT NULL CHECK (
+    tipo IN ('foto','foto_depois','assinatura','documento','relatorio','auto_infracao','anexo_mensagem')
+  ),
+  -- 'antes' (registro da ocorrência) ou 'depois' (vistoria). Esta coluna é o
+  -- que mantém reversível a decisão sobre exibir as fotos de campo: a tela
+  -- decide por `WHERE momento = ...`, o schema não precisa saber a resposta.
+  -- Se a equipe optar por não exibir, é só parar de coletar.
+  momento text CHECK (momento IS NULL OR momento IN ('antes','depois')),
+
+  -- O arquivo NÃO mora no banco. Convenção do caminho no bucket sifau-anexos:
+  --   {fiscal_id}/{ano}/{mes}/{anexo_id}.jpg
+  -- O primeiro nível por fiscal faz a política de bucket caber em uma linha
+  -- (cada fiscal alcança a própria pasta), e o id no nome evita colisão entre
+  -- arquivos de mesmo nome enviados pelo usuário.
+  storage_path text NOT NULL UNIQUE,
+  arquivo_nome text,
+  arquivo_tipo text,
+  arquivo_bytes integer CHECK (arquivo_bytes IS NULL OR arquivo_bytes > 0),
+  largura integer CHECK (largura IS NULL OR largura > 0),
+  altura integer CHECK (altura IS NULL OR altura > 0),
+
+  titulo text,
+  descricao text,
+  ordem integer NOT NULL DEFAULT 0,
+  metadados jsonb NOT NULL DEFAULT '{}'::jsonb,
+  criado_em timestamptz NOT NULL DEFAULT now(),
+
+  CONSTRAINT anexos_vinculo_unico CHECK (
+    (ocorrencia_id IS NOT NULL)::int
+    + (vistoria_id IS NOT NULL)::int
+    + (ordem_servico_id IS NOT NULL)::int
+    + (auto_infracao_id IS NOT NULL)::int
+    + (mensagem_id IS NOT NULL)::int = 1
+  )
+);
+
+CREATE INDEX IF NOT EXISTS idx_anexos_fiscal ON public.anexos(fiscal_id);
+CREATE INDEX IF NOT EXISTS idx_anexos_ocorrencia ON public.anexos(ocorrencia_id);
+CREATE INDEX IF NOT EXISTS idx_anexos_vistoria ON public.anexos(vistoria_id);
+CREATE INDEX IF NOT EXISTS idx_anexos_ordem_servico ON public.anexos(ordem_servico_id);
+CREATE INDEX IF NOT EXISTS idx_anexos_auto_infracao ON public.anexos(auto_infracao_id);
+CREATE INDEX IF NOT EXISTS idx_anexos_mensagem ON public.anexos(mensagem_id);
+CREATE INDEX IF NOT EXISTS idx_anexos_tipo ON public.anexos(tipo);
+CREATE INDEX IF NOT EXISTS idx_anexos_criado_em ON public.anexos(criado_em DESC);
+
+ALTER TABLE public.anexos ENABLE ROW LEVEL SECURITY;
+
+REVOKE ALL ON public.anexos FROM PUBLIC, anon, authenticated;
+GRANT SELECT, INSERT, DELETE ON public.anexos TO authenticated;
+-- O arquivo é imutável: por UPDATE só passam os campos de apresentação.
+-- `storage_path` só é gravável no INSERT — nem o dono troca o arquivo de um
+-- anexo existente, ele cria outro.
+GRANT UPDATE (titulo, descricao, ordem) ON public.anexos TO authenticated;
+
+-- Diz se o alvo do vínculo pertence a quem está pedindo. É SECURITY DEFINER
+-- para poder ler as tabelas operacionais sem depender das políticas delas, e
+-- porque o auth.uid() precisa ser o do usuário, não o do dono da função.
+--
+-- `autos_infracao` é o único vínculo sem coluna de fiscal: o dono vem do
+-- vínculo dele (ordem de serviço ou ocorrência).
+CREATE OR REPLACE FUNCTION public.attachment_links_belong_to_user(
+  p_occurrence_id uuid,
+  p_inspection_id uuid,
+  p_order_id uuid,
+  p_fine_id uuid,
+  p_message_id uuid
+)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+  SELECT
+    (
+      p_occurrence_id IS NULL
+      OR EXISTS (
+        SELECT 1 FROM public.ocorrencias AS o
+        WHERE o.id = p_occurrence_id
+          AND (o.fiscal_registrou = auth.uid() OR o.fiscal_designado = auth.uid())
+      )
+    )
+    AND (
+      p_inspection_id IS NULL
+      OR EXISTS (
+        SELECT 1 FROM public.vistorias AS v
+        WHERE v.id = p_inspection_id AND v.fiscal_id = auth.uid()
+      )
+    )
+    AND (
+      p_order_id IS NULL
+      OR EXISTS (
+        SELECT 1 FROM public.ordens_servico AS os
+        WHERE os.id = p_order_id
+          AND (os.fiscal_abertura = auth.uid() OR os.fiscal_designado = auth.uid())
+      )
+    )
+    AND (
+      p_fine_id IS NULL
+      OR EXISTS (
+        SELECT 1 FROM public.autos_infracao AS a
+        WHERE a.id = p_fine_id
+          AND (
+            EXISTS (
+              SELECT 1 FROM public.ordens_servico AS os
+              WHERE os.id = a.os_id
+                AND (os.fiscal_abertura = auth.uid() OR os.fiscal_designado = auth.uid())
+            )
+            OR EXISTS (
+              SELECT 1 FROM public.ocorrencias AS o
+              WHERE o.id = a.ocorrencia_id
+                AND (o.fiscal_registrou = auth.uid() OR o.fiscal_designado = auth.uid())
+            )
+          )
+      )
+    )
+    AND (
+      p_message_id IS NULL
+      OR EXISTS (
+        SELECT 1 FROM public.admin_messages AS m
+        WHERE m.id = p_message_id
+          AND (
+            (m.sender_type = 'fiscal' AND m.fiscal_id = auth.uid())
+            OR (m.sender_type = 'admin' AND m.admin_id = auth.uid())
+          )
+      )
+    );
+$$;
+REVOKE ALL ON FUNCTION public.attachment_links_belong_to_user(uuid, uuid, uuid, uuid, uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.attachment_links_belong_to_user(uuid, uuid, uuid, uuid, uuid) TO authenticated;
+
+DROP POLICY IF EXISTS anexos_select_owner_admin_or_linked ON public.anexos;
+DROP POLICY IF EXISTS anexos_insert_owner ON public.anexos;
+DROP POLICY IF EXISTS anexos_update_owner_or_admin ON public.anexos;
+DROP POLICY IF EXISTS anexos_delete_owner_or_admin ON public.anexos;
+
+-- SELECT: o dono, o administrador, ou o fiscal vinculado ao alvo. O terceiro
+-- caso é o que deixa o fiscal designado ver as fotos "antes" da ocorrência que
+-- ele vai vistoriar, sem abrir o arquivo para os colegas.
+CREATE POLICY anexos_select_owner_admin_or_linked ON public.anexos FOR SELECT TO authenticated
+  USING (
+    public.is_admin()
+    OR (
+      public.is_active_fiscal()
+      AND (
+        fiscal_id = auth.uid()
+        OR public.attachment_links_belong_to_user(
+             ocorrencia_id, vistoria_id, ordem_servico_id, auto_infracao_id, mensagem_id
+           )
+      )
+    )
+  );
+
+-- INSERT: exige ser o dono E que o alvo do vínculo seja alcançável por quem
+-- está inserindo. Sem a segunda parte, um fiscal poderia anexar arquivo no
+-- registro de outro só acertando o id.
+CREATE POLICY anexos_insert_owner ON public.anexos FOR INSERT TO authenticated
+  WITH CHECK (
+    fiscal_id = auth.uid()
+    AND public.is_active_fiscal()
+    AND public.attachment_links_belong_to_user(
+          ocorrencia_id, vistoria_id, ordem_servico_id, auto_infracao_id, mensagem_id
+        )
+  );
+
+CREATE POLICY anexos_update_owner_or_admin ON public.anexos FOR UPDATE TO authenticated
+  USING (public.is_admin() OR (public.is_active_fiscal() AND fiscal_id = auth.uid()))
+  WITH CHECK (public.is_admin() OR (public.is_active_fiscal() AND fiscal_id = auth.uid()));
+
+CREATE POLICY anexos_delete_owner_or_admin ON public.anexos FOR DELETE TO authenticated
+  USING (public.is_admin() OR (public.is_active_fiscal() AND fiscal_id = auth.uid()));
+
+COMMENT ON TABLE public.anexos IS
+  'Modelo único de arquivos. O conteúdo fica no Supabase Storage (bucket privado) e aqui mora só o storage_path.';
+COMMENT ON COLUMN public.anexos.momento IS
+  'Hora do registro na linha do tempo: antes (ocorrência) ou depois (vistoria).';
+COMMENT ON COLUMN public.anexos.storage_path IS
+  'sifau/{fiscal_id}/{ano}/{mes}/{anexo_id}.extensao — o arquivo nunca é gravado no banco.';
+
+-- ============================================================================
+-- FOTOS NO STORAGE — bucket privado, caminho no lugar do base64
+-- ============================================================================
+-- Até aqui a foto era gravada como base64 DENTRO da linha do banco:
+-- `ocorrencias.fotos` e `vistorias.fotos_depois` somavam ~7,8 MB por ciclo de
+-- fiscalização (uma ocorrência com 5 fotos mais uma vistoria com 3), e 99,7%
+-- desse peso era conteúdo que nenhuma tela exibe. No plano gratuito do
+-- Supabase (500 MB de banco) isso dá ~63 ciclos antes de encher.
+--
+-- A partir daqui o arquivo mora no bucket privado `sifau-anexos` e a linha
+-- guarda só o CAMINHO do objeto — algumas dezenas de bytes. A tabela
+-- `public.anexos` continua sendo quem descreve o arquivo: tipo, momento,
+-- tamanho e dimensões.
+
+INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+VALUES (
+  'sifau-anexos',
+  'sifau-anexos',
+  false,                                -- privado: nada de URL permanente
+  5 * 1024 * 1024,                      -- 5 MB, o limite já documentado no README
+  ARRAY[
+    'image/jpeg', 'image/png', 'image/webp',
+    'application/pdf',
+    'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+  ]
+)
+-- `DO NOTHING` de propósito, e não `DO UPDATE`.
+--
+-- O SQL Editor executa o script inteiro como UMA transação: se um único
+-- comando falhar por falta de privilégio, a instalação inteira é desfeita.
+-- O papel do SQL Editor tem INSERT em `storage.buckets` (é o caminho que a
+-- própria Supabase documenta para criar bucket por SQL), mas UPDATE em uma
+-- tabela do serviço de Storage não é garantido em todo projeto.
+--
+-- Então: se o bucket não existe, ele é criado com os valores certos; se já
+-- existe, o script não briga com ele. O roteiro de aplicação tem uma consulta
+-- que confere `public = false`, que é a única configuração que importa aqui.
+ON CONFLICT (id) DO NOTHING;
+
+-- Convenção do caminho: {fiscal_id}/{ano}/{mes}/{anexo_id}.{ext}
+--
+-- O primeiro nível é o id do fiscal, e é isso que faz a política de acesso
+-- caber em uma linha: cada fiscal só alcança a própria pasta. Não existe
+-- política de leitura pública — o acesso é por URL assinada, gerada na hora
+-- para quem tem direito ao arquivo.
+--
+-- `is_admin()` entra em leitura e exclusão porque o painel precisa auditar e
+-- remover conteúdo; não entra no INSERT, que é sempre do dono do arquivo.
+
+-- Exceção nomeada para o anexo da CONVERSA: o arquivo enviado pela administração
+-- fica na pasta dela, e o fiscal destinatário da mensagem precisa conseguir
+-- abri-lo. A função responde sim só para o arquivo preso a uma mensagem
+-- endereçada a quem pergunta — não abre a pasta do administrador.
+CREATE OR REPLACE FUNCTION public.can_read_message_attachment(p_object_name text)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+  SELECT EXISTS (
+    SELECT 1
+    FROM public.admin_messages AS m
+    WHERE p_object_name = ANY (m.attachments)
+      AND (
+        m.fiscal_id = auth.uid()
+        OR public.is_admin()
+      )
+  );
+$$;
+
+COMMENT ON FUNCTION public.can_read_message_attachment(text) IS
+  'Diz se o usuário atual pode ler um arquivo do bucket pelo fato de ele estar anexado a uma mensagem da conversa dele. Não concede nada além disso.';
+
+REVOKE ALL ON FUNCTION public.can_read_message_attachment(text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.can_read_message_attachment(text) TO authenticated;
+
+CREATE INDEX IF NOT EXISTS idx_admin_messages_attachments
+  ON public.admin_messages USING gin (attachments);
+
+DROP POLICY IF EXISTS anexos_storage_select ON storage.objects;
+DROP POLICY IF EXISTS anexos_storage_insert ON storage.objects;
+DROP POLICY IF EXISTS anexos_storage_update ON storage.objects;
+DROP POLICY IF EXISTS anexos_storage_delete ON storage.objects;
+
+CREATE POLICY anexos_storage_select ON storage.objects FOR SELECT TO authenticated
+  USING (
+    bucket_id = 'sifau-anexos'
+    AND (
+      public.is_admin()
+      OR (storage.foldername(name))[1] = auth.uid()::text
+      -- Arquivo anexado a uma mensagem da conversa de quem pergunta. É o que
+      -- permite ao fiscal abrir o anexo que a administração enviou, sem abrir a
+      -- pasta do administrador para mais nada.
+      OR public.can_read_message_attachment(name)
+    )
+  );
+
+CREATE POLICY anexos_storage_insert ON storage.objects FOR INSERT TO authenticated
+  WITH CHECK (
+    bucket_id = 'sifau-anexos'
+    AND (storage.foldername(name))[1] = auth.uid()::text
+  );
+
+CREATE POLICY anexos_storage_update ON storage.objects FOR UPDATE TO authenticated
+  USING (
+    bucket_id = 'sifau-anexos'
+    AND (storage.foldername(name))[1] = auth.uid()::text
+  )
+  WITH CHECK (
+    bucket_id = 'sifau-anexos'
+    AND (storage.foldername(name))[1] = auth.uid()::text
+  );
+
+CREATE POLICY anexos_storage_delete ON storage.objects FOR DELETE TO authenticated
+  USING (
+    bucket_id = 'sifau-anexos'
+    AND (
+      public.is_admin()
+      OR (storage.foldername(name))[1] = auth.uid()::text
+    )
+  );
+
+-- ----------------------------------------------------------------------------
+-- Guarda contra a volta do base64
+-- ----------------------------------------------------------------------------
+-- Trocar o conteúdo por caminho é o tipo de mudança que volta sem avisar: basta
+-- uma tela nova chamar o upload do jeito antigo e o banco começa a inchar de
+-- novo, de forma invisível, porque nada quebra na hora.
+--
+-- Este gatilho recusa qualquer valor que comece com `data:` — o prefixo de
+-- arquivo embutido — nas colunas que passaram a guardar caminho. Ele só olha a
+-- coluna citada (no UPDATE, apenas quando ela é alterada), então não pesa no
+-- resto da operação.
+CREATE OR REPLACE FUNCTION public.reject_inline_base64() RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = ''
+AS $$
+DECLARE
+  coluna text := TG_ARGV[0];
+  valor jsonb := pg_catalog.to_jsonb(NEW);
+  tipo text;
+  item text;
+BEGIN
+  IF valor IS NULL THEN
+    RETURN NEW;
+  END IF;
+
+  tipo := pg_catalog.jsonb_typeof(valor -> coluna);
+
+  -- Coluna de lista: cada item é um arquivo (fotos da ocorrência e da vistoria).
+  IF tipo = 'array' THEN
+    FOR item IN SELECT pg_catalog.jsonb_array_elements_text(valor -> coluna) LOOP
+      IF item LIKE 'data:%' THEN
+        RAISE EXCEPTION
+          'A coluna % não aceita arquivo embutido: suba o arquivo para o Storage e grave só o caminho.',
+          coluna
+          USING ERRCODE = '22023';
+      END IF;
+    END LOOP;
+
+  -- Coluna de texto simples: o valor é o arquivo (assinatura do autuado).
+  ELSIF tipo = 'string' THEN
+    IF (valor ->> coluna) LIKE 'data:%' THEN
+      RAISE EXCEPTION
+        'A coluna % não aceita arquivo embutido: suba o arquivo para o Storage e grave só o caminho.',
+        coluna
+        USING ERRCODE = '22023';
+    END IF;
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.reject_inline_base64() FROM PUBLIC, anon, authenticated;
+
+DROP TRIGGER IF EXISTS trg_ocorrencias_fotos_sem_base64 ON public.ocorrencias;
+CREATE TRIGGER trg_ocorrencias_fotos_sem_base64
+  BEFORE INSERT OR UPDATE OF fotos ON public.ocorrencias
+  FOR EACH ROW EXECUTE FUNCTION public.reject_inline_base64('fotos');
+
+DROP TRIGGER IF EXISTS trg_vistorias_fotos_sem_base64 ON public.vistorias;
+CREATE TRIGGER trg_vistorias_fotos_sem_base64
+  BEFORE INSERT OR UPDATE OF fotos_depois ON public.vistorias
+  FOR EACH ROW EXECUTE FUNCTION public.reject_inline_base64('fotos_depois');
+
+COMMENT ON COLUMN public.ocorrencias.fotos IS
+  'Caminhos das fotos no bucket sifau-anexos (nunca o arquivo). A descrição de cada arquivo está em public.anexos.';
+COMMENT ON COLUMN public.vistorias.fotos_depois IS
+  'Caminhos das fotos "depois" no bucket sifau-anexos (nunca o arquivo). A descrição de cada arquivo está em public.anexos.';
+COMMENT ON COLUMN public.anexos.storage_path IS
+  'Caminho no bucket sifau-anexos: {fiscal_id}/{ano}/{mes}/{anexo_id}.extensao — o arquivo nunca é gravado no banco.';
+
+-- ----------------------------------------------------------------------------
+-- Assinatura do autuado: caminho no lugar do arquivo
+-- ----------------------------------------------------------------------------
+-- `autos_infracao.assinatura_autuado` guardava o PNG da assinatura colhida na
+-- tela, em base64, dentro da linha. A assinatura é gerada como imagem a partir
+-- de um canvas, então o arquivo é pequeno se comparado a uma foto — mas o
+-- princípio é o mesmo das fotos de campo, e a regra precisa ser uma só: arquivo
+-- mora no bucket, banco guarda o caminho.
+--
+-- O aplicativo continua montando o PDF do auto com a imagem em memória (o
+-- jsPDF precisa dos bytes). O que muda é o que fica GRAVADO.
+DROP TRIGGER IF EXISTS trg_autos_assinatura_sem_base64 ON public.autos_infracao;
+CREATE TRIGGER trg_autos_assinatura_sem_base64
+  BEFORE INSERT OR UPDATE OF assinatura_autuado ON public.autos_infracao
+  FOR EACH ROW EXECUTE FUNCTION public.reject_inline_base64('assinatura_autuado');
+
+COMMENT ON COLUMN public.autos_infracao.assinatura_autuado IS
+  'Caminho da assinatura no bucket sifau-anexos (nunca o arquivo). A descrição do arquivo está em public.anexos.';
+
+-- ----------------------------------------------------------------------------
+-- Documentos do fiscal: caminho no lugar do arquivo
+-- ----------------------------------------------------------------------------
+-- `documentos.arquivo_data` guardava o arquivo inteiro em base64 (text NOT
+-- NULL). É a biblioteca digitalizada do fiscal — PDF e Word, que são
+-- justamente os formatos que não dá para recomprimir —, então é o ponto do
+-- banco que mais cresce por upload, e a lista da tela trazia o conteúdo de
+-- TODOS os documentos só para desenhar as miniaturas.
+--
+-- A coluna passa a se chamar `arquivo_path` e guarda o caminho no bucket. O
+-- nome mudou junto porque `arquivo_data` descrevia o conteúdo que deixou de
+-- existir: manter o nome antigo guardando um caminho é o tipo de meia-verdade
+-- que faz o próximo leitor errar.
+--
+-- O bloco só renomeia se a coluna antiga existir, para que rodar este arquivo
+-- de novo (ou aplicá-lo sobre um banco que já nasceu com o nome novo) não
+-- quebre.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'documentos' AND column_name = 'arquivo_data'
+  ) THEN
+    ALTER TABLE public.documentos RENAME COLUMN arquivo_data TO arquivo_path;
+  END IF;
+
+  -- O nome da restrição NOT NULL é derivado do nome da coluna no momento da
+  -- criação, e renomear a coluna NÃO renomeia a restrição: um banco migrado
+  -- ficaria com `documentos_arquivo_data_not_null` descrevendo `arquivo_path`
+  -- — um nome que mente sobre o conteúdo, e diferente de um banco novo. Foi a
+  -- conferência de paridade entre os dois caminhos de instalação que pegou
+  -- isso; sem ela a diferença só apareceria quando alguém comparasse os dois
+  -- bancos.
+  IF EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'public.documentos'::regclass
+      AND conname = 'documentos_arquivo_data_not_null'
+  ) THEN
+    ALTER TABLE public.documentos
+      RENAME CONSTRAINT documentos_arquivo_data_not_null TO documentos_arquivo_path_not_null;
+  END IF;
+END $$;
+
+COMMENT ON COLUMN public.documentos.arquivo_path IS
+  'Caminho do arquivo no bucket sifau-anexos: {fiscal_id}/{ano}/{mes}/{documento_id}.extensao (nunca o arquivo).';
+
+-- A mesma guarda das fotos vale aqui: sem ela, uma tela antiga (ou um cliente
+-- fora do app) volta a gravar base64 e o banco volta a crescer sem ninguém ver.
+DROP TRIGGER IF EXISTS trg_documentos_arquivo_sem_base64 ON public.documentos;
+CREATE TRIGGER trg_documentos_arquivo_sem_base64
+  BEFORE INSERT OR UPDATE OF arquivo_path ON public.documentos
+  FOR EACH ROW EXECUTE FUNCTION public.reject_inline_base64('arquivo_path');
+
+-- ----------------------------------------------------------------------------
+-- Anexos da conversa: caminho no lugar do arquivo
+-- ----------------------------------------------------------------------------
+-- `admin_messages.attachments` é a lista de arquivos que o administrador envia
+-- ao fiscal no painel. Era mais um ponto com o arquivo dentro da linha, em
+-- base64, e como a coluna é `text[]` (lista de textos) o formato antigo era
+-- exatamente o mesmo das fotos: cada item era um data URL inteiro.
+--
+-- Agora cada item é o caminho no bucket sifau-anexos. O arquivo sobe pela pasta
+-- de quem envia — o administrador —, que é a mesma regra das fotos: cada conta
+-- escreve na própria pasta, e a política do bucket não precisa de exceção.
+--
+-- O que o formato antigo guardava e o novo não: o nome original do arquivo. A
+-- coluna é uma lista de textos, e o caminho carrega o id do arquivo justamente
+-- para não colidir com nomes repetidos. As telas baixam usando o nome do
+-- caminho (`{id}.extensao`), que abre no programa certo por causa da extensão.
+DROP TRIGGER IF EXISTS trg_admin_messages_attachments_sem_base64 ON public.admin_messages;
+CREATE TRIGGER trg_admin_messages_attachments_sem_base64
+  BEFORE INSERT OR UPDATE OF attachments ON public.admin_messages
+  FOR EACH ROW EXECUTE FUNCTION public.reject_inline_base64('attachments');
+
+COMMENT ON COLUMN public.admin_messages.attachments IS
+  'Caminhos dos arquivos da conversa no bucket sifau-anexos (nunca o arquivo). Cada item é um caminho: {remetente_id}/{ano}/{mes}/{anexo_id}.extensao. O primeiro nível é a pasta de quem enviou, que é como a política do bucket autoriza a escrita.';
 
 -- Fim da instalação. Guarde também as migrations em supabase/migrations/.

@@ -1,0 +1,51 @@
+name: Verificar
+
+# O que este job protege: os dois defeitos mais graves deste projeto (trilha de
+# auditoria legível por usuário não aprovado e administrador sem perfil fiscal
+# ativo) eram invisíveis em revisão de código. Também protege o que foi
+# construído depois: paridade entre os dois caminhos de instalação, script
+# re-executável, nenhuma tela arrastando arquivo em `select('*')` e a leitura do
+# link de recuperação de senha.
+#
+# Roda em pull request e em push para main. Sem isto, um PR com defeito de RLS
+# passa como "só uma mudança de SQL".
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verificar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # 22 é o mínimo: os testes de unidade importam arquivos .ts direto e
+          # dependem da remoção de tipos do Node (22.6+, ligada por padrão a
+          # partir do 22.18).
+          node-version: 22
+          cache: npm
+
+      - name: Instalar dependências
+        run: npm ci
+
+      # O `verify` inclui a verificação do projeto Android (tests/check-android.mjs),
+      # que confere sem SDK: o Capacitor consegue rodar, todo recurso citado pelo
+      # tema existe e o ícone é o do SIFAU. As três coisas já quebraram o APK.
+      - name: Tipo, lint, testes (unidade, banco, PWA, Android), paridade e re-execução
+        run: npm run verify
+
+      - name: Build de produção
+        run: npm run build
+
+      # A verificação de origem lê o código; esta lê o que saiu da construção.
+      # Um service worker correto no código que não chega ao dist deixa o
+      # aplicativo sem funcionar sem conexão, e sem nenhum aviso.
+      - name: Conferir o aplicativo construído
+        run: npm run test:pwa:dist

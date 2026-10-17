@@ -5,10 +5,30 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "vite build && node assets/pwa/compilar.mjs",
     "lint": "eslint src",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit -p tsconfig.app.json"
+    "typecheck": "tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p tsconfig.worker.json",
+    "test:sql": "node tests/run.mjs",
+    "test:sql:migrations": "node tests/run.mjs --source=migrations",
+    "test:sql:parity": "node tests/compare-install-paths.mjs",
+    "test:columns": "node tests/check-query-columns.mjs",
+    "test:unit": "node --test tests/unit/*.test.mjs",
+    "test:marca": "node tests/check-marca.mjs",
+    "test:assets": "node tests/check-external-assets.mjs",
+    "marca:gerar": "node assets/marca/gerar.mjs",
+    "verify": "npm run typecheck && npm run lint && npm run test:unit && npm run test:marca && npm run test:assets && npm run test:pwa && npm run test:release && npm run test:android && npm run test:columns && npm run test:sql && npm run test:sql:migrations && npm run test:sql:parity && npm run test:sql:rerun",
+    "test:sql:rerun": "node tests/apply-twice.mjs",
+    "marca:android": "node assets/android/gerar.mjs",
+    "pwa:gerar": "node assets/pwa/gerar.mjs",
+    "pwa:compilar": "node assets/pwa/compilar.mjs",
+    "test:pwa": "node tests/check-pwa.mjs",
+    "test:pwa:negativos": "node tests/provar-negativos-pwa.mjs",
+    "test:pwa:dist": "node tests/check-pwa-dist.mjs",
+    "test:release": "node tests/check-release.mjs",
+    "test:release:negativos": "node tests/check-release.mjs --negativos",
+    "test:android": "node tests/check-android.mjs",
+    "test:android:negativos": "node tests/check-android.mjs --negativos"
   },
   "dependencies": {
     "@capacitor/core": "^6.1.2",
@@ -23,7 +43,10 @@
     "@capacitor/android": "^6.1.2",
     "@capacitor/cli": "^6.1.2",
     "@capacitor/push-notifications": "^6.0.2",
+    "@electric-sql/pglite": "^0.5.10",
     "@eslint/js": "^9.9.1",
+    "@fontsource/dm-sans": "^5.3.0",
+    "@fontsource/space-grotesk": "^5.3.0",
     "@types/leaflet": "^1.9.12",
     "@types/react": "^18.3.5",
     "@types/react-dom": "^18.3.0",
@@ -38,6 +61,8 @@
     "vite": "^6.4.4"
   },
   "overrides": {
-    "tar": "^7.5.22"
+    "@capacitor/cli": {
+      "tar": "^6.2.1"
+    }
   }
 }

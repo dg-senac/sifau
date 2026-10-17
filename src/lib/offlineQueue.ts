@@ -1,4 +1,22 @@
 import { supabase } from '@/lib/supabase';
+import { uploadAnexo } from '@/lib/storage';
+
+/**
+ * Arquivo que acompanha um registro pendente (passo 10: foto no Storage).
+ *
+ * O arquivo viaja junto do registro, e não como item separado, por dois
+ * motivos: a contagem do aviso de sincronização continua contando REGISTROS
+ * (uma ocorrência com 3 fotos é 1 pendência, não 4), e a ordem fica garantida —
+ * o arquivo sobe antes de a linha que o referencia ser gravada.
+ */
+export type ArquivoPendente = {
+  /** Caminho no bucket, já montado antes do envio. */
+  path: string;
+  /** O arquivo em si, no formato que o `PhotoUpload` produz. */
+  dataUrl: string;
+  /** Linha de `public.anexos` a inserir depois que o vínculo existir. */
+  anexo: Record<string, unknown>;
+};
 
 export type QueueItem = {
   id: string;
@@ -9,6 +27,8 @@ export type QueueItem = {
   label: string;
   createdAt: string;
   error?: string;
+  /** Arquivos a subir para o Storage antes de gravar a linha. */
+  uploads?: ArquivoPendente[];
 };
 
 const STORAGE_KEY = 'sifau-offline-queue';
@@ -58,6 +78,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+/** Um arquivo pendente só é válido se tiver caminho, conteúdo e linha de anexo. */
+function isArquivoPendente(value: unknown): value is ArquivoPendente {
+  return isRecord(value) &&
+    typeof value.path === 'string' && value.path.length > 0 &&
+    typeof value.dataUrl === 'string' && value.dataUrl.startsWith('data:') &&
+    isRecord(value.anexo);
+}
+
 function readQueue(key = getStorageKey()): QueueItem[] {
   try {
     const raw = localStorage.getItem(key);
@@ -70,7 +98,9 @@ function readQueue(key = getStorageKey()): QueueItem[] {
       (item.op === 'insert' || item.op === 'update') &&
       isRecord(item.payload) &&
       (item.op !== 'update' || (isRecord(item.match) && Object.keys(item.match).length > 0)) &&
-      typeof item.label === 'string' && typeof item.createdAt === 'string',
+      typeof item.label === 'string' && typeof item.createdAt === 'string' &&
+      (item.uploads === undefined ||
+        (Array.isArray(item.uploads) && item.uploads.every(isArquivoPendente))),
     );
   } catch {
     return [];
@@ -98,12 +128,17 @@ export function subscribeQueue(listener: Listener): () => void {
 }
 
 type QueueOperationInput =
-  | { table: string; op: 'insert'; payload: Record<string, unknown>; label: string }
+  | { table: string; op: 'insert'; payload: Record<string, unknown>; label: string; uploads?: ArquivoPendente[] }
   | { table: string; op: 'update'; match: Record<string, unknown>; payload: Record<string, unknown>; label: string };
 
 /** Adiciona uma operação pendente com ID estável para tentativas idempotentes. */
-export function enqueue(table: string, payload: Record<string, unknown>, label: string): QueueItem {
-  return enqueueBatch([{ table, op: 'insert', payload, label }])[0];
+export function enqueue(
+  table: string,
+  payload: Record<string, unknown>,
+  label: string,
+  uploads?: ArquivoPendente[],
+): QueueItem {
+  return enqueueBatch([{ table, op: 'insert', payload, label, uploads }])[0];
 }
 
 export function enqueueUpdate(
@@ -181,11 +216,40 @@ export async function flushQueue(): Promise<{ sent: number; remaining: number }>
           continue;
         }
       } else {
-        const { error: insertError } = await supabase.from(item.table).upsert(
-          { ...item.payload, id: item.payload.id ?? item.id },
-          { onConflict: 'id', ignoreDuplicates: true },
-        );
-        error = insertError;
+        // Os arquivos sobem ANTES da linha: o registro grava caminhos, e um
+        // caminho sem arquivo é pior que um arquivo sem registro. O envio é
+        // idempotente, então repetir depois de uma falha parcial é seguro.
+        for (const arquivo of item.uploads ?? []) {
+          try {
+            await uploadAnexo(arquivo.path, arquivo.dataUrl);
+          } catch (uploadError) {
+            error = { message: `Falha ao enviar a foto: ${(uploadError as Error).message}` };
+            break;
+          }
+        }
+
+        if (!error) {
+          const { error: insertError } = await supabase.from(item.table).upsert(
+            { ...item.payload, id: item.payload.id ?? item.id },
+            { onConflict: 'id', ignoreDuplicates: true },
+          );
+          error = insertError;
+        }
+
+        // Só com a linha gravada é que o vínculo existe para os anexos.
+        if (!error) {
+          for (const arquivo of item.uploads ?? []) {
+            const { error: anexoError } = await supabase
+              .from('anexos')
+              .upsert(arquivo.anexo, { onConflict: 'id', ignoreDuplicates: true });
+            if (anexoError) {
+              // O arquivo e o caminho já estão salvos; o que falta é a
+              // descrição do arquivo. Vale registrar sem descartar o pendente.
+              console.error('Anexo gravado sem descrição:', anexoError);
+              break;
+            }
+          }
+        }
       }
 
       // Uma troca de usuário durante a requisição não pode modificar a fila de outra conta.

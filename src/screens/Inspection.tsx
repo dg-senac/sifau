@@ -5,9 +5,11 @@ import {
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { ACTIONS, Fiscal, Occurrence } from '@/lib/types';
+import { OCCURRENCE_COLUMNS } from '@/lib/columns';
 import { PageTitle, EmptyState, Badge } from '@/components/ui';
 import { PhotoUpload } from '@/components/PhotoUpload';
 import { createQueueId, enqueueBatch, isRecoverableSyncError } from '@/lib/offlineQueue';
+import { enviarArquivos, gravarAnexos, prepararAnexos, type AnexoPreparado } from '@/lib/anexos';
 const AutoInfracaoForm = lazy(() => import('@/screens/AutoInfracao').then((module) => ({ default: module.AutoInfracaoForm })));
 
 export function Inspection({ fiscal }: { fiscal: Fiscal | null }) {
@@ -27,7 +29,7 @@ export function Inspection({ fiscal }: { fiscal: Fiscal | null }) {
     }
     setLoading(true);
     const { data, error } = await supabase
-      .from('ocorrencias').select('*')
+      .from('ocorrencias').select(OCCURRENCE_COLUMNS)
       .eq('fiscal_designado', fiscalId)
       .in('status', ['Atribuída', 'Em vistoria'])
       .order('sla_deadline');
@@ -228,8 +230,25 @@ function InspectionForm({
     setSaving(true);
     setMessage('');
 
+    const vistoriaId = createQueueId();
+    let fotosPreparadas: AnexoPreparado[];
+    try {
+      fotosPreparadas = await prepararAnexos({
+        fiscalId: fiscal.id,
+        arquivos: photos,
+        tipo: 'foto_depois',
+        momento: 'depois',
+        vinculo: { vistoria_id: vistoriaId },
+      });
+    } catch (error) {
+      console.error('Erro ao preparar as fotos da vistoria:', error);
+      setMessage('Não foi possível preparar as fotos. Remova as imagens e tente novamente.');
+      setSaving(false);
+      return;
+    }
+
     const vistoriaPayload = {
-      id: createQueueId(),
+      id: vistoriaId,
       ocorrencia_id: item.id,
       fiscal_id: fiscal.id,
       chegada_at: arrival.time.toISOString(),
@@ -239,11 +258,13 @@ function InspectionForm({
       acao_tomada: acao,
       valor_multa: acao === 'Multa' ? parseFloat(valorMulta) || 0 : null,
       numero_processo: acao === 'Multa' ? numeroProcesso : null,
-      fotos_depois: photos,
+      // Caminhos no bucket. O RPC `complete_inspection` continua exigindo de 1 a
+      // 5 fotos — o que mudou é que agora ele recebe o caminho, não o arquivo.
+      fotos_depois: fotosPreparadas.map((foto) => foto.path),
     };
     const newStatus = acao === 'Sem ação' || acao === 'Orientação' ? 'Resolvida' : acao === 'Encaminhamento' ? 'Escalonada' : 'Resolvida';
     const queueInspection = () => enqueueBatch([
-      { table: 'vistorias', op: 'insert', payload: vistoriaPayload, label: `Vistoria: ${item.categoria}` },
+      { table: 'vistorias', op: 'insert', payload: vistoriaPayload, label: `Vistoria: ${item.categoria}`, uploads: fotosPreparadas },
       { table: 'ocorrencias', op: 'update', match: { id: item.id }, payload: { status: newStatus }, label: 'Atualização de status' },
     ]);
 
@@ -261,6 +282,25 @@ function InspectionForm({
       return;
     }
 
+    // Fotos primeiro, pelo mesmo motivo da ocorrência: a vistoria grava caminhos.
+    try {
+      await enviarArquivos(fotosPreparadas);
+    } catch (uploadError) {
+      console.error('Erro ao enviar as fotos da vistoria:', uploadError);
+      try {
+        queueInspection();
+      } catch (queueError) {
+        console.error('Não foi possível guardar a vistoria neste aparelho:', queueError);
+        setMessage('Não foi possível salvar a vistoria offline. Libere espaço no aparelho e tente novamente.');
+        setSaving(false);
+        return;
+      }
+      setMessage('Não foi possível enviar as fotos agora: a vistoria ficou na fila e será enviada automaticamente.');
+      setSaving(false);
+      setTimeout(() => onClose(acao === 'Multa' ? { valorMulta: parseFloat(valorMulta) || 0, numeroProcesso } : undefined), 1400);
+      return;
+    }
+
     const { error: completionError } = await supabase.rpc('complete_inspection', {
       p_vistoria_id: vistoriaPayload.id,
       p_occurrence_id: item.id,
@@ -272,7 +312,7 @@ function InspectionForm({
       p_acao_tomada: acao,
       p_valor_multa: acao === 'Multa' ? parseFloat(valorMulta) || 0 : null,
       p_numero_processo: acao === 'Multa' ? numeroProcesso : null,
-      p_fotos_depois: photos,
+      p_fotos_depois: vistoriaPayload.fotos_depois,
       p_status: newStatus,
       p_note: `Vistoria realizada. Ação: ${acao}.`,
     });
@@ -297,6 +337,9 @@ function InspectionForm({
       return;
     }
 
+    // Com a vistoria gravada pelo RPC, as fotos ganham descrição em `anexos`.
+    // O vínculo já existe, então a política de INSERT da tabela aprova.
+    await gravarAnexos(fotosPreparadas);
     setSaving(false);
     onClose(acao === 'Multa' ? { valorMulta: parseFloat(valorMulta) || 0, numeroProcesso } : undefined);
   };

@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Símbolo SIFAU">
+  <!-- Gerado por `npm run marca:gerar` — a fonte é src/lib/marca.ts. Não edite este arquivo à mão. -->
+  <path d="M32 9.6 51 17.1v16.3c0 11.4-8.1 19.8-19 24-10.9-4.2-19-12.6-19-24V17.1z" fill="#000000"/>
+    <path d="M22.6 34.2 29.4 41 42 28.2" fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="32" cy="49.5" r="3.1" fill="#fff"/>
+</svg>
