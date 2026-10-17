@@ -12,7 +12,7 @@ import {
 import { supabase } from '@/lib/supabase';
 import { AutoInfracao, Fiscal, OS_ORIGINS, OS_STATUSES, OrdemServico, Vistoria } from '@/lib/types';
 import { FINE_COLUMNS, INSPECTION_COLUMNS } from '@/lib/columns';
-import { PageTitle, EmptyState, Badge } from '@/components/ui';
+import { PageTitle, EmptyState, Badge, SkeletonList } from '@/components/ui';
 
 export function Orders({ fiscal }: { fiscal: Fiscal | null }) {
   const [orders, setOrders] = useState<OrdemServico[]>([]);
@@ -73,13 +73,20 @@ export function Orders({ fiscal }: { fiscal: Fiscal | null }) {
         <span className="result-count">{orders.length} ordens</span>
       </div>
       {loading ? (
-        <div className="empty-state"><Navigation className="spin" size={22} /></div>
+        <SkeletonList linhas={3} label="Carregando ordens de serviço" />
       ) : orders.length === 0 ? (
         <EmptyState icon={<FileText size={28} />} title="Nenhuma ordem de serviço" message="Crie a primeira OS para começar." />
       ) : (
         <div className="order-list">
           {orders.map((order) => (
-            <article className="order-card" key={order.id} onClick={() => setDetail(order)}>
+            <article
+              className="order-card tapable"
+              key={order.id}
+              onClick={() => setDetail(order)}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setDetail(order); } }}
+            >
               <div className="order-number">
                 {order.numero}
                 <Badge>{order.status}</Badge>

@@ -6,7 +6,7 @@ import {
 import { supabase } from '@/lib/supabase';
 import { ACTIONS, Fiscal, Occurrence } from '@/lib/types';
 import { OCCURRENCE_COLUMNS } from '@/lib/columns';
-import { PageTitle, EmptyState, Badge } from '@/components/ui';
+import { PageTitle, EmptyState, Badge, NoticeCard, SkeletonList } from '@/components/ui';
 import { PhotoUpload } from '@/components/PhotoUpload';
 import { createQueueId, enqueueBatch, isRecoverableSyncError } from '@/lib/offlineQueue';
 import { enviarArquivos, gravarAnexos, prepararAnexos, type AnexoPreparado } from '@/lib/anexos';
@@ -91,15 +91,13 @@ export function Inspection({ fiscal }: { fiscal: Fiscal | null }) {
     <>
       <PageTitle eyebrow="Operação" title="Minha fila de vistorias"
         action={<span className="sync-pill"><CheckCircle2 size={14} /> Sincronizado</span>} />
-      <div className="notice-card">
-        <div className="notice-icon"><Navigation size={19} /></div>
-        <div>
-          <b>Casos atribuídos pela coordenação</b>
-          <span>As ocorrências designadas a você aparecem nesta fila; a administração faz a triagem e distribuição.</span>
-        </div>
-      </div>
+      <NoticeCard
+        icon={<Navigation size={19} />}
+        title="Casos atribuídos pela coordenação"
+        text="As ocorrências designadas a você aparecem nesta fila; a administração faz a triagem e distribuição."
+      />
       {loading ? (
-        <div className="empty-state"><Loader2 className="spin" size={22} /></div>
+        <SkeletonList linhas={3} label="Carregando fila de vistorias" />
       ) : items.length === 0 ? (
         <EmptyState icon={<ClipboardList size={28} />} title="Fila limpa" message="Você não tem vistorias atribuídas no momento." />
       ) : (
@@ -154,10 +152,7 @@ function RedistributeScreen({
     <>
       <PageTitle eyebrow="Redistribuir" title="Transferir vistoria"
         action={<button className="icon-button light" onClick={onClose}><X size={20} /></button>} />
-      <div className="notice-card">
-        <div className="notice-icon"><MapPin size={19} /></div>
-        <div><b>{item.categoria}</b><span>{item.endereco}</span></div>
-      </div>
+      <NoticeCard icon={<MapPin size={19} />} title={item.categoria} text={item.endereco} />
       {message && <div className="form-message"><AlertTriangle size={16} />{message}</div>}
       {fiscais.length === 0 ? (
         <EmptyState icon={<ClipboardList size={28} />} title="Sem fiscais disponíveis" message="Não há outros fiscais ativos." />

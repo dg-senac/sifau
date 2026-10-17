@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { ChevronRight, FileCheck2, Loader2, Search, ShieldCheck } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { Auditoria, OCCURRENCE_STATUSES } from '@/lib/types';
-import { PageTitle, EmptyState } from '@/components/ui';
+import { PageTitle, EmptyState, SkeletonList } from '@/components/ui';
 
 export function Audit() {
   const [logs, setLogs] = useState<(Auditoria & { fiscal_nome?: string })[]>([]);
@@ -154,7 +154,7 @@ export function Audit() {
       </div>
 
       {loading ? (
-        <div className="empty-state"><Loader2 className="spin" size={22} /></div>
+        <SkeletonList linhas={4} label="Carregando auditoria" />
       ) : logs.length === 0 ? (
         <EmptyState icon={<FileCheck2 size={28} />} title="Sem movimentações ainda" message="A trilha aparecerá conforme os status forem alterados." />
       ) : (

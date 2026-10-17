@@ -5,7 +5,7 @@ import {
 import { supabase } from '@/lib/supabase';
 import { Auditoria, Fiscal, Occurrence, OCCURRENCE_STATUSES, Vistoria, CATEGORIES, SUBCATEGORIES, URGENCY_LEVELS } from '@/lib/types';
 import { INSPECTION_COLUMNS } from '@/lib/columns';
-import { PageTitle, Badge, UrgencyBadge } from '@/components/ui';
+import { PageTitle, Badge, UrgencyBadge, SkeletonList } from '@/components/ui';
 
 export function OccurrenceDetail({
   item,
@@ -23,6 +23,7 @@ export function OccurrenceDetail({
   const [newStatus, setNewStatus] = useState(item.status);
   const [observacao, setObservacao] = useState('');
   const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState('');
   const [showStatusForm, setShowStatusForm] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
@@ -38,6 +39,8 @@ export function OccurrenceDetail({
   });
 
   const load = useCallback(async () => {
+    setLoading(true);
+    try {
     const [{ data: vData }, { data: aData }, { data: fData }] = await Promise.all([
       // A vistoria é exibida sem as fotos "depois": data, ação, laudo e multa.
       supabase.from('vistorias').select(INSPECTION_COLUMNS).eq('ocorrencia_id', item.id).order('created_at', { ascending: false }),
@@ -50,6 +53,9 @@ export function OccurrenceDetail({
     const fmap = Object.fromEntries(fiscalDirectory.map((member) => [member.id, member.nome]));
     setFiscalNome(fmap[item.fiscal_registrou] ?? 'Fiscal');
     if (item.fiscal_designado) setDesignadoNome(fmap[item.fiscal_designado] ?? 'Fiscal');
+    } finally {
+      setLoading(false);
+    }
   }, [item.id, item.fiscal_registrou, item.fiscal_designado]);
 
   useEffect(() => {
@@ -402,7 +408,9 @@ export function OccurrenceDetail({
       <div className="section-heading" style={{ marginTop: '20px' }}>
         <h2>Vistorias ({vistorias.length})</h2>
       </div>
-      {vistorias.length === 0 ? (
+      {loading ? (
+        <SkeletonList linhas={1} label="Carregando vistorias" />
+      ) : vistorias.length === 0 ? (
         <div className="empty-state">
           <FileText size={32} />
           <b>Nenhuma vistoria realizada</b>
@@ -429,7 +437,9 @@ export function OccurrenceDetail({
       <div className="section-heading" style={{ marginTop: '20px' }}>
         <h2>Histórico de status ({auditLogs.length})</h2>
       </div>
-      {auditLogs.length === 0 ? (
+      {loading ? (
+        <SkeletonList linhas={1} label="Carregando histórico" />
+      ) : auditLogs.length === 0 ? (
         <div className="empty-state">
           <Clock3 size={32} />
           <b>Sem movimentações</b>

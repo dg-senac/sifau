@@ -5,7 +5,7 @@ import { Loader2, MapPin } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { Occurrence } from '@/lib/types';
 import { OCCURRENCE_COLUMNS } from '@/lib/columns';
-import { PageTitle } from '@/components/ui';
+import { EmptyState, PageTitle } from '@/components/ui';
 
 const STATUS_COLOR: Record<string, string> = {
   Aberta: '#4f8fe1',
@@ -104,7 +104,7 @@ export function MapScreen() {
         <span><i style={{ background: '#be4d4d' }} /> Escalonada</span>
       </div>
       {!loading && items.length === 0 && (
-        <div className="empty-state"><MapPin size={27} /><b>Sem ocorrências geolocalizadas</b><span>Registros com localização aparecerão aqui.</span></div>
+        <EmptyState icon={<MapPin size={27} />} title="Sem ocorrências geolocalizadas" message="Registros com localização aparecerão aqui." />
       )}
     </>
   );

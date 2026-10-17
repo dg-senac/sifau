@@ -10,7 +10,7 @@ import {
 import { supabase } from '@/lib/supabase';
 import { OCCURRENCE_STATUSES } from '@/lib/types';
 import { OCCURRENCE_EXPORT_COLUMNS } from '@/lib/columns';
-import { PageTitle } from '@/components/ui';
+import { PageTitle, SkeletonList } from '@/components/ui';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 
@@ -32,11 +32,14 @@ export function Dashboard() {
   const [escalated, setEscalated] = useState<number>(0);
   const [occurrences, setOccurrences] = useState<DashboardOccurrence[]>([]);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [loading, setLoading] = useState(true);
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
 
   useEffect(() => {
     const fetchDashboardData = async () => {
+      setLoading(true);
+      try {
       const [total, resolved, overdue, occData] = await Promise.all([
         supabase.from('ocorrencias').select('id', { count: 'exact', head: true }),
         supabase
@@ -120,6 +123,9 @@ export function Dashboard() {
       }));
       ranking.sort((a, b) => b.resolvidas - a.resolvidas);
       setFiscalRanking(ranking);
+      } finally {
+        setLoading(false);
+      }
     };
 
     fetchDashboardData();
@@ -225,6 +231,17 @@ export function Dashboard() {
     a.click();
     URL.revokeObjectURL(url);
   };
+
+  // Enquanto os números chegam, a forma do painel aparece — e não uma tela
+  // vazia dizendo "sem dados", que parece quebra quando na verdade é espera.
+  if (loading) {
+    return (
+      <>
+        <PageTitle eyebrow="Visão geral" title="Painel operacional" />
+        <SkeletonList linhas={2} label="Carregando painel" />
+      </>
+    );
+  }
 
   return (
     <>

@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
-  ChevronRight, Clock3, ListFilter, Loader2, MapPin, Plus, SlidersHorizontal, X,
+  ChevronRight, Clock3, ListFilter, MapPin, Plus, SlidersHorizontal, X,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { Fiscal, Occurrence, Screen } from '@/lib/types';
-import { PageTitle, EmptyState, UrgencyBadge, Badge } from '@/components/ui';
+import { PageTitle, EmptyState, UrgencyBadge, Badge, SkeletonList } from '@/components/ui';
 import { OCCURRENCE_COLUMNS } from '@/lib/columns';
 import { OccurrenceDetail } from '@/screens/OccurrenceDetail';
 
@@ -141,7 +141,7 @@ export function HomeScreen({
         <span className="result-count">{items.length} registros</span>
       </div>
       {loading ? (
-        <div className="empty-state"><Loader2 className="spin" size={22} /></div>
+        <SkeletonList linhas={3} label="Carregando ocorrências" />
       ) : items.length === 0 ? (
         <EmptyState icon={<MapPin size={27} />} title="Nenhuma ocorrência" message="Os registros da sua cidade aparecerão aqui." />
       ) : (
@@ -158,7 +158,13 @@ export function HomeScreen({
 export function OccurrenceCard({ item, onClick }: { item: Occurrence; onClick?: () => void }) {
   const overdue = new Date(item.sla_deadline).getTime() < Date.now() && !['Resolvida', 'Arquivada'].includes(item.status);
   return (
-    <article className="occurrence-card tapable" onClick={onClick}>
+    <article
+      className="occurrence-card tapable"
+      onClick={onClick}
+      role={onClick ? 'button' : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      onKeyDown={(e) => { if (onClick && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onClick(); } }}
+    >
       <div className="card-top">
         <span className={`status-dot ${item.status.toLowerCase().replace(/ /g, '-')}`} />
         <span className="card-category">{item.categoria}</span>

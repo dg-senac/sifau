@@ -1,4 +1,4 @@
-import { Bell, ChevronRight, FileCheck2, FileText, LogOut, Map, MessageSquare, User, Users } from 'lucide-react';
+import { Bell, ChevronRight, FileCheck2, FileText, LogOut, Map, MessageSquare, ShieldCheck, User, Users } from 'lucide-react';
 import { signOut } from '@/lib/authActions';
 import { Fiscal, Screen } from '@/lib/types';
 import { PageTitle } from '@/components/ui';
@@ -7,12 +7,19 @@ export function MoreScreen({
   fiscal,
   unreadCount,
   onNavigate,
+  isAdmin = false,
 }: {
   fiscal: Fiscal | null;
   unreadCount: number;
   onNavigate: (s: Screen) => void;
+  isAdmin?: boolean;
 }) {
   const items: { id: Screen; label: string; desc: string; icon: typeof User; badge?: number }[] = [
+    // O painel vem primeiro para o administrador: é a tela que ele mais usa e
+    // que não existe na barra de baixo.
+    ...(isAdmin
+      ? [{ id: 'admin' as Screen, label: 'Painel Administrativo', desc: 'Aprovar fiscais e distribuir ocorrências', icon: ShieldCheck }]
+      : []),
     { id: 'profile', label: 'Meu perfil', desc: 'Dados pessoais e notificações', icon: User },
     { id: 'notifications', label: 'Notificações', desc: 'Atribuições, prazos e status', icon: Bell, badge: unreadCount },
     { id: 'messages', label: 'Mensagens', desc: 'Conversa com a administração', icon: MessageSquare },

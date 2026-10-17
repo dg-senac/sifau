@@ -4,7 +4,7 @@ import { supabase } from '@/lib/supabase';
 import { getAuthErrorMessage, signOut, trocarSenhaComSenhaAtual } from '@/lib/authActions';
 import { TAMANHO_MINIMO_DA_SENHA, validarNovaSenha } from '@/lib/recuperacaoDeSenha';
 import { Fiscal } from '@/lib/types';
-import { PageTitle } from '@/components/ui';
+import { NoticeCard, PageTitle } from '@/components/ui';
 
 export function ProfileScreen({ fiscal, onUpdated }: { fiscal: Fiscal | null; onUpdated: () => void }) {
   const [nome, setNome] = useState(fiscal?.nome ?? '');
@@ -157,18 +157,22 @@ export function ProfileScreen({ fiscal, onUpdated }: { fiscal: Fiscal | null; on
           <div className="toggle-row">
             <button
               type="button"
+              role="switch"
+              aria-label="Avisar quando uma ocorrência for atribuída a mim"
               className={`toggle ${notifAtribuicao ? 'on' : ''}`}
               onClick={() => setNotifAtribuicao((value) => !value)}
-              aria-pressed={notifAtribuicao}
+              aria-checked={notifAtribuicao}
             ><i /></button>
             <span>Avisar quando uma ocorrência for atribuída a mim</span>
           </div>
           <div className="toggle-row">
             <button
               type="button"
+              role="switch"
+              aria-label="Avisar quando o prazo estiver próximo do fim"
               className={`toggle ${notifSla ? 'on' : ''}`}
               onClick={() => setNotifSla((value) => !value)}
-              aria-pressed={notifSla}
+              aria-checked={notifSla}
             ><i /></button>
             <span>Avisar quando o prazo de SLA estiver próximo do fim</span>
           </div>
@@ -238,13 +242,11 @@ export function ProfileScreen({ fiscal, onUpdated }: { fiscal: Fiscal | null; on
         </button>
       </form>
 
-      <div className="notice-card">
-        <div className="notice-icon"><ShieldCheck size={17} /></div>
-        <div>
-          <b>SIFAU · Sistema Municipal de Fiscalização e Atendimento Urbano</b>
-          <span>Versão 1.2 · Dados protegidos por autenticação e auditoria imutável.</span>
-        </div>
-      </div>
+      <NoticeCard
+        icon={<ShieldCheck size={17} />}
+        title="SIFAU · Sistema Municipal de Fiscalização e Atendimento Urbano"
+        text="Versão 1.2 · Dados protegidos por autenticação e auditoria imutável."
+      />
 
       <button className="drawer-link logout" onClick={() => void signOut()}>
         <LogOut size={19} /> Encerrar sessão

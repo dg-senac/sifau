@@ -3,7 +3,7 @@ import { jsPDF } from 'jspdf';
 import { AlertTriangle, CheckCircle2, FileDown, Loader2, ShieldAlert, X } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { Fiscal, Occurrence, SCIENCE_TYPES } from '@/lib/types';
-import { PageTitle } from '@/components/ui';
+import { NoticeCard, PageTitle } from '@/components/ui';
 import { SignaturePad } from '@/components/SignaturePad';
 import { createQueueId, enqueue, isRecoverableSyncError } from '@/lib/offlineQueue';
 import { enviarArquivos, gravarAnexos, prepararAnexos, type AnexoPreparado } from '@/lib/anexos';
@@ -243,15 +243,13 @@ export function AutoInfracaoForm({
       <>
         <PageTitle eyebrow="Auto emitido" title="Documento pronto"
           action={<button className="icon-button light" onClick={onClose}><X size={20} /></button>} />
-        <div className="notice-card">
-          <div className="notice-icon"><CheckCircle2 size={19} /></div>
-          <div>
-            <b>{queuedOffline ? 'Auto salvo no aparelho' : 'Auto de infração registrado'}</b>
-            <span>{queuedOffline
-              ? 'Aguardando conexão para sincronizar com o Supabase. Gere o PDF e confira a fila de sincronização antes de encerrar a sessão.'
-              : 'Gere o PDF agora para colher a assinatura ou compartilhar com o autuado.'}</span>
-          </div>
-        </div>
+        <NoticeCard
+          icon={<CheckCircle2 size={19} />}
+          title={queuedOffline ? 'Auto salvo no aparelho' : 'Auto de infração registrado'}
+          text={queuedOffline
+            ? 'Aguardando conexão para sincronizar com o Supabase. Gere o PDF e confira a fila de sincronização antes de encerrar a sessão.'
+            : 'Gere o PDF agora para colher a assinatura ou compartilhar com o autuado.'}
+        />
         <button className="primary-button full" onClick={generatePdf}>
           <FileDown size={18} /> Gerar e baixar PDF
         </button>

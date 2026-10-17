@@ -12,13 +12,17 @@ import {
   UserCog,
   Users,
   X,
+  ShieldCheck,
 } from 'lucide-react';
 import { signOut } from '@/lib/authActions';
 import { Fiscal, Screen } from '@/lib/types';
 import { SifauSimbolo } from '@/components/Logo';
 import { SyncBanner } from '@/components/SyncBanner';
 
-const MORE_GROUP: Screen[] = ['more', 'profile', 'notifications', 'messages', 'map', 'users', 'audit', 'documents'];
+// O painel administrativo é alcançado pela lista "Mais" (e pelo menu lateral),
+// e por isso conta como parte desse grupo: sem ele, a barra de baixo ficava
+// sem nenhum item marcado enquanto o administrador estava no painel.
+const MORE_GROUP: Screen[] = ['more', 'admin', 'profile', 'notifications', 'messages', 'map', 'users', 'audit', 'documents'];
 
 export function AppShell({
   fiscal,
@@ -27,6 +31,7 @@ export function AppShell({
   navItems,
   children,
   unreadCount = 0,
+  isAdmin = false,
 }: {
   fiscal: Fiscal | null;
   screen: Screen;
@@ -34,6 +39,7 @@ export function AppShell({
   navItems: { id: Screen; label: string; icon: typeof MenuIcon }[];
   children: ReactNode;
   unreadCount?: number;
+  isAdmin?: boolean;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
 
@@ -106,6 +112,14 @@ export function AppShell({
                 <span>{fiscal?.bairro ?? 'Região não definida'}</span>
               </div>
             </button>
+            {/* O painel não é um item da barra de baixo. Sem este atalho, o
+                administrador que navegasse para outra tela não teria por onde
+                voltar — a barra e a lista "Mais" não citam o painel. */}
+            {isAdmin && (
+              <button className="drawer-link" onClick={() => change('admin')}>
+                <ShieldCheck size={19} /> Painel Administrativo
+              </button>
+            )}
             <button className="drawer-link" onClick={() => change('new')}>
               <Plus size={19} /> Nova ocorrência
             </button>
