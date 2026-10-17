@@ -164,8 +164,8 @@ SELECT policyname, cmd FROM pg_policies
 WHERE schemaname = 'storage' AND tablename = 'objects' ORDER BY policyname;
 
 -- 9. O destinatário pode abrir o anexo da conversa (esperado: 1 linha).
---    É a função que a política do bucket usa; sem ela, a tela do fiscal volta a
---    mostrar "anexo disponível somente no painel administrativo".
+--    É a função que a política do bucket usa; sem ela, o destinatário deixa de
+--    abrir o anexo da conversa.
 SELECT proname AS funcao
 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
 WHERE n.nspname = 'public' AND p.proname = 'can_read_message_attachment';
