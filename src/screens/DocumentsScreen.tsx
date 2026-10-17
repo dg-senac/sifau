@@ -19,7 +19,7 @@ import { fileUtils } from '@/lib/fileUtils';
 import { AnexoImagem, BotaoBaixarAnexo } from '@/components/StorageFile';
 import { DocumentGallery } from '@/components/DocumentGallery';
 import { DocumentHistory } from '@/components/DocumentHistory';
-import { PageTitle, EmptyState } from '@/components/ui';
+import { PageTitle, EmptyState, SkeletonPage } from '@/components/ui';
 
 type ViewMode = 'gallery' | 'history';
 type FilterType = 'all' | 'ocorrencia' | 'vistoria' | 'ordem_servico' | 'general';
@@ -144,12 +144,7 @@ export function DocumentsScreen({ fiscal }: { fiscal: Fiscal | null }) {
   const stats = getStats();
 
   if (loading) {
-    return (
-      <div className="loading-screen">
-        <RefreshCw className="spin" size={30} />
-        <span>Carregando documentos...</span>
-      </div>
-    );
+    return <SkeletonPage label="Carregando documentos" />;
   }
 
   return (

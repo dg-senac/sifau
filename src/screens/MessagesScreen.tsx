@@ -2,7 +2,7 @@ import { FormEvent, useCallback, useEffect, useState } from 'react';
 import { AlertCircle, Loader2, MessageSquare, RefreshCw, Send } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { Fiscal } from '@/lib/types';
-import { PageTitle } from '@/components/ui';
+import { EmptyState, PageTitle, SkeletonList } from '@/components/ui';
 import { AnexoDaMensagem } from '@/components/AnexoDaMensagem';
 
 type AdminMessage = {
@@ -113,9 +113,9 @@ export function MessagesScreen({ fiscal }: { fiscal: Fiscal | null }) {
       <section className="message-page-card" aria-label="Conversa com a administração">
         <div className="message-page-history" aria-live="polite">
           {loading ? (
-            <div className="empty-state"><Loader2 className="spin" size={22} /></div>
+            <SkeletonList linhas={3} label="Carregando mensagens" />
           ) : items.length === 0 ? (
-            <div className="empty-state"><MessageSquare size={28} /><b>Nenhuma mensagem</b><span>Envie uma mensagem para falar com a administração.</span></div>
+            <EmptyState icon={<MessageSquare size={28} />} title="Nenhuma mensagem" message="Envie uma mensagem para falar com a administração." />
           ) : items.map((item) => (
             <article key={item.id} className={`message-page-item ${item.sender_type === 'fiscal' ? 'sent' : 'received'}`}>
               <div className="message-page-bubble">

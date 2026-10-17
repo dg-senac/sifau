@@ -5,6 +5,7 @@ import { Fiscal, Screen } from '@/lib/types';
 import { AppShell, LoadingScreen } from '@/components/AppShell';
 import { useSession } from '@/lib/useSession';
 import { signOut } from '@/lib/authActions';
+import { SkeletonPage } from '@/components/ui';
 import { AuthScreen } from '@/screens/AuthScreen';
 import { NovaSenhaScreen } from '@/screens/NovaSenhaScreen';
 import { HomeScreen } from '@/screens/HomeScreen';
@@ -143,10 +144,17 @@ function App() {
 
   useEffect(() => { void loadFiscal(); }, [loadFiscal]);
 
+  // Um administrador COMEÇA no painel, mas não fica preso nele: ele também é
+  // fiscal de campo e precisa alcançar as outras telas. Com `screen` entre as
+  // dependências, este efeito rodava a cada navegação e desfazia o toque no
+  // mesmo instante — o app voltava para o painel e a navegação parecia morta.
+  // Agora a troca só acontece quando a CONDIÇÃO de administrador muda.
   useEffect(() => {
-    if (isAdmin) setScreen('admin');
-    else if (screen === 'admin') setScreen('home');
-  }, [isAdmin, screen]);
+    setScreen((atual) => {
+      if (isAdmin) return 'admin';
+      return atual === 'admin' ? 'home' : atual;
+    });
+  }, [isAdmin]);
 
   useEffect(() => {
     setQueueUser(session?.user.id ?? null);
@@ -312,7 +320,7 @@ function App() {
       case 'users':
         return <UsersScreen currentFiscal={fiscal} />;
       case 'more':
-        return <MoreScreen fiscal={fiscal} unreadCount={unreadCount} onNavigate={setScreen} />;
+        return <MoreScreen fiscal={fiscal} unreadCount={unreadCount} onNavigate={setScreen} isAdmin={isAdmin} />;
       case 'profile':
         return <ProfileScreen fiscal={fiscal} onUpdated={loadFiscal} />;
       case 'notifications':
@@ -337,8 +345,9 @@ function App() {
       onScreen={setScreen}
       navItems={navItems}
       unreadCount={unreadCount}
+      isAdmin={isAdmin}
     >
-      <Suspense fallback={<LoadingScreen message="Carregando tela" />}>
+      <Suspense fallback={<SkeletonPage />}>
         {renderScreen()}
       </Suspense>
     </AppShell>

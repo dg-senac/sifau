@@ -32,6 +32,7 @@ import {
   prepararAnexosDeMensagem, type AnexoDeMensagem,
 } from '@/lib/mensagens';
 import { AnexoImagem, BotaoBaixarAnexo } from '@/components/StorageFile';
+import { EmptyState } from '@/components/ui';
 
 type FiscalWithStatus = Fiscal & {
   is_online: boolean;
@@ -839,6 +840,7 @@ export function AdminScreen() {
                   }}
                   className="action-button chat"
                   title="Enviar mensagem"
+                  aria-label={`Enviar mensagem para ${fiscal.nome}`}
                 >
                   <MessageSquare size={18} />
                 </button>
@@ -850,6 +852,7 @@ export function AdminScreen() {
                     }}
                     className="action-button unban"
                     title="Desbanir"
+                    aria-label={`Desbanir ${fiscal.nome}`}
                   >
                     <CheckCircle size={18} />
                   </button>
@@ -862,6 +865,7 @@ export function AdminScreen() {
                     }}
                     className="action-button ban"
                     title="Banir usuário"
+                    aria-label={`Banir ${fiscal.nome}`}
                   >
                     <Ban size={18} />
                   </button>
@@ -884,7 +888,7 @@ export function AdminScreen() {
                   <p>{selectedFiscal.email}</p>
                 </div>
               </div>
-              <button onClick={() => setShowChat(false)} className="icon-button">
+              <button onClick={() => setShowChat(false)} className="icon-button" aria-label="Fechar conversa">
                 <X size={20} />
               </button>
             </div>
@@ -1061,16 +1065,17 @@ export function AdminScreen() {
             <div className="logs-header">
               <FileText size={24} />
               <h2>Logs de Atividades</h2>
-              <button onClick={() => setShowLogs(false)} className="icon-button">
+              <button onClick={() => setShowLogs(false)} className="icon-button" aria-label="Fechar registros">
                 <X size={20} />
               </button>
             </div>
             <div className="logs-content">
               {logs.length === 0 ? (
-                <div className="empty-state">
-                  <FileText size={48} />
-                  <p>Nenhuma atividade registrada</p>
-                </div>
+                <EmptyState
+                  icon={<FileText size={32} />}
+                  title="Nenhuma atividade registrada"
+                  message="As ações administrativas aparecerão aqui."
+                />
               ) : (
                 logs.map(log => (
                   <div key={log.id} className="log-entry">

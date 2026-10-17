@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
-import { Bell, CheckCheck, ClipboardCheck, Info, Loader2, TriangleAlert } from 'lucide-react';
+import { Bell, CheckCheck, ClipboardCheck, Info, TriangleAlert } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { Fiscal, Notificacao } from '@/lib/types';
-import { PageTitle, EmptyState } from '@/components/ui';
+import { PageTitle, EmptyState, SkeletonList } from '@/components/ui';
 
 const ICONS: Record<Notificacao['tipo'], typeof Bell> = {
   atribuicao: ClipboardCheck,
@@ -72,7 +72,7 @@ export function NotificationsScreen({ fiscal }: { fiscal: Fiscal | null }) {
         }
       />
       {loading ? (
-        <div className="empty-state"><Loader2 className="spin" size={22} /></div>
+        <SkeletonList linhas={3} label="Carregando notificações" />
       ) : items.length === 0 ? (
         <EmptyState icon={<Bell size={27} />} title="Nenhuma notificação" message="Avisos de atribuição, prazo e status aparecerão aqui." />
       ) : (
