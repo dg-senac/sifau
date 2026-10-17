@@ -2306,6 +2306,38 @@ ON CONFLICT (id) DO NOTHING;
 --
 -- `is_admin()` entra em leitura e exclusão porque o painel precisa auditar e
 -- remover conteúdo; não entra no INSERT, que é sempre do dono do arquivo.
+
+-- Exceção nomeada para o anexo da CONVERSA: o arquivo enviado pela administração
+-- fica na pasta dela, e o fiscal destinatário da mensagem precisa conseguir
+-- abri-lo. A função responde sim só para o arquivo preso a uma mensagem
+-- endereçada a quem pergunta — não abre a pasta do administrador.
+CREATE OR REPLACE FUNCTION public.can_read_message_attachment(p_object_name text)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+  SELECT EXISTS (
+    SELECT 1
+    FROM public.admin_messages AS m
+    WHERE p_object_name = ANY (m.attachments)
+      AND (
+        m.fiscal_id = auth.uid()
+        OR public.is_admin()
+      )
+  );
+$$;
+
+COMMENT ON FUNCTION public.can_read_message_attachment(text) IS
+  'Diz se o usuário atual pode ler um arquivo do bucket pelo fato de ele estar anexado a uma mensagem da conversa dele. Não concede nada além disso.';
+
+REVOKE ALL ON FUNCTION public.can_read_message_attachment(text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.can_read_message_attachment(text) TO authenticated;
+
+CREATE INDEX IF NOT EXISTS idx_admin_messages_attachments
+  ON public.admin_messages USING gin (attachments);
+
 DROP POLICY IF EXISTS anexos_storage_select ON storage.objects;
 DROP POLICY IF EXISTS anexos_storage_insert ON storage.objects;
 DROP POLICY IF EXISTS anexos_storage_update ON storage.objects;
@@ -2317,6 +2349,10 @@ CREATE POLICY anexos_storage_select ON storage.objects FOR SELECT TO authenticat
     AND (
       public.is_admin()
       OR (storage.foldername(name))[1] = auth.uid()::text
+      -- Arquivo anexado a uma mensagem da conversa de quem pergunta. É o que
+      -- permite ao fiscal abrir o anexo que a administração enviou, sem abrir a
+      -- pasta do administrador para mais nada.
+      OR public.can_read_message_attachment(name)
     )
   );
 

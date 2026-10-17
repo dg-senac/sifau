@@ -350,6 +350,20 @@ button.anexo-erro { cursor: pointer; color: #be4d4d; }
 .message-page-item { display: flex; }
 .message-page-item.sent { justify-content: flex-end; }
 .message-page-bubble { max-width: min(85%, 540px); padding: 10px 12px; border-radius: 12px; background: #f3f7fd; color: #294a73; }
+
+/* Anexos da conversa: fotos aparecem como miniatura clicável, documentos como
+   botão de baixar. O rótulo é por tipo ("Foto", "Documento PDF"), e não pelo
+   nome do arquivo: o nome original se perdeu quando o anexo saiu de dentro da
+   linha, e um id não ajuda o fiscal a saber o que está abrindo. */
+.message-anexos { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 8px; }
+.message-anexo { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 0 9px; border-radius: 9px; background: #fff; border: 1px solid #d9e6f6; color: #2165ba; font-size: 11px; font-weight: 700; text-decoration: none; }
+.message-anexo:hover { background: #f2f8ff; border-color: #b9d3f0; }
+.message-anexo-imagem { padding: 0 9px 0 0; overflow: hidden; }
+.message-anexo-imagem img { width: 44px; height: 44px; object-fit: cover; border-radius: 8px 0 0 8px; display: block; }
+.message-anexo-carregando { color: #7a8da8; font-weight: 600; }
+.message-anexo-erro { color: #a44848; background: #fff1f0; border-color: #f0c9c6; cursor: pointer; }
+.message-anexo-arquivo { cursor: pointer; }
+.message-anexo-baixar { color: #7fa6d6; }
 .message-page-item.sent .message-page-bubble { background: #1766d1; color: #fff; }
 .message-page-bubble b { font-size: 11px; opacity: .82; }
 .message-page-bubble p { margin: 4px 0 7px; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; line-height: 1.45; }

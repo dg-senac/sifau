@@ -90,7 +90,15 @@ os documentos sem vínculo.
 
 Nenhum arquivo fica no banco. Todos vão para o bucket privado `sifau-anexos` e a
 linha guarda só o caminho (`{fiscal_id}/{ano}/{mes}/{anexo_id}.extensao`) — a
-exibição pede uma URL assinada, que vale 1 hora. A descrição do arquivo de um
+exibição pede uma URL assinada, que vale 1 hora.
+
+**Quem lê o quê.** A regra é a pasta: cada conta lê a própria (`{uid}/...`) e o
+administrador audita tudo. Há uma exceção nomeada, e só uma: o **anexo de uma
+mensagem da conversa** — o arquivo está na pasta de quem enviou, então o
+destinatário o alcança pela função `can_read_message_attachment(name)`, que
+responde sim apenas para o arquivo preso a uma mensagem dele. Não é acesso à
+pasta do administrador: arquivo que não está em nenhuma conversa daquele fiscal
+continua fora de alcance, e apagar a mensagem tira o acesso ao anexo. A descrição do arquivo de um
 registro (tipo, momento, tamanho, dimensões) fica em `public.anexos`; as fotos de
 ocorrência e vistoria continuam nas colunas `fotos`/`fotos_depois`, agora com o
 caminho em vez do conteúdo.

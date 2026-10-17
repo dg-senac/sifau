@@ -336,6 +336,113 @@ export default {
       t.eq(rows[0]?.attachments, [caminho], 'caminho guardado na lista');
     });
 
+    // ── Anexo da conversa: o destinatário precisa abrir ────────────────────
+    // Esta parte existe porque a limitação era invisível: o arquivo do anexo
+    // fica na pasta de QUEM ENVIOU (o administrador), e a regra de pasta do
+    // bucket só deixa cada conta ler a própria pasta. O fiscal destinatário via
+    // um aviso no lugar do anexo.
+    //
+    // A liberação é estreita de propósito, e os testes abaixo provam os dois
+    // lados: o destinatário alcança O ANEXO DELE, e não alcança mais nada da
+    // pasta do administrador.
+    // Caminho próprio, e não o mesmo de outro teste: com o mesmo caminho,
+    // apagar a mensagem daqui deixaria o acesso valendo pela mensagem de lá —
+    // e o teste que prova a revogação passaria a provar nada.
+    const anexoDaConversa = `${IDS.admin}/2026/10/anexo-da-conversa.pdf`;
+    const outroArquivoDoAdmin = `${IDS.admin}/2026/10/laudo-interno.pdf`;
+    let mensagemComAnexo = '';
+
+    await t.test('administração anexa arquivo e envia ao fiscal', async () => {
+      // O arquivo sobe pela pasta de quem envia — é a regra que o Storage impõe.
+      await db.as(IDS.admin, 'authenticated', async () => {
+        await db.query(
+          `INSERT INTO storage.objects (bucket_id, name, owner) VALUES ($1, $2, $3)`,
+          [BUCKET, anexoDaConversa, IDS.admin]);
+        await db.query(
+          `INSERT INTO storage.objects (bucket_id, name, owner) VALUES ($1, $2, $3)`,
+          [BUCKET, outroArquivoDoAdmin, IDS.admin]);
+        const { rows } = await db.query(
+          `INSERT INTO public.admin_messages (admin_id, fiscal_id, sender_type, message, attachments)
+           VALUES ($1, $2, 'admin', 'Segue a planta do imóvel.', ARRAY[$3])
+           RETURNING id`,
+          [IDS.admin, IDS.active, anexoDaConversa]);
+        mensagemComAnexo = rows[0].id;
+      });
+      t.ok(mensagemComAnexo, 'mensagem gravada');
+    });
+
+    await t.test('o destinatário consegue ler o anexo da mensagem dele', async () => {
+      const { rows } = await db.as(IDS.active, 'authenticated', async () =>
+        db.query(`SELECT name FROM storage.objects WHERE name = $1`, [anexoDaConversa]));
+      t.eq(rows.map((r) => r.name), [anexoDaConversa], 'arquivo visível para o destinatário');
+
+      // E consegue pedir a URL assinada dele — é isso que a tela faz.
+      const assinatura = await db.as(IDS.active, 'authenticated', async () =>
+        db.query(`SELECT public.can_read_message_attachment($1) AS pode`, [anexoDaConversa]));
+      t.eq(assinatura.rows[0]?.pode, true, 'a regra autoriza a assinatura do endereço');
+    });
+
+    await t.test('outro fiscal NÃO lê o anexo da conversa alheia', async () => {
+      await db.as(IDS.other, 'authenticated', async () => {
+        await t.deniedOrEmpty(
+          () => db.query(`SELECT name FROM storage.objects WHERE name = $1`, [anexoDaConversa]),
+          'ler o anexo da conversa de outro fiscal');
+        const { rows } = await db.query(
+          `SELECT public.can_read_message_attachment($1) AS pode`, [anexoDaConversa]);
+        t.eq(rows[0]?.pode, false, 'a regra não autoriza outro fiscal');
+      });
+    });
+
+    await t.test('o destinatário NÃO lê outro arquivo da pasta do administrador', async () => {
+      // A liberação vale para o arquivo preso à mensagem, não para a pasta.
+      await db.as(IDS.active, 'authenticated', async () => {
+        await t.deniedOrEmpty(
+          () => db.query(`SELECT name FROM storage.objects WHERE name = $1`, [outroArquivoDoAdmin]),
+          'ler arquivo da pasta do administrador que não é anexo da conversa');
+      });
+    });
+
+    await t.test('apagar a mensagem tira o acesso ao arquivo', async () => {
+      // O acesso vem da mensagem; sem ela, o arquivo volta a ficar fora de
+      // alcance do fiscal. É o que impede a liberação de virar uma porta
+      // permanente: ela existe enquanto existir a conversa.
+      // Apagado como dono do banco de propósito: quem apaga é a manutenção do
+      // sistema, e não existe (nem deve existir) política de DELETE na conversa
+      // para o administrador. O que se prova aqui é a regra de acesso ao
+      // arquivo reagindo ao desaparecimento da mensagem.
+      const apagadas = await db.owner(
+        `DELETE FROM public.admin_messages WHERE id = $1 RETURNING id`, [mensagemComAnexo]);
+      t.eq(apagadas.rows.length, 1, 'mensagem realmente apagada');
+
+      await db.as(IDS.active, 'authenticated', async () => {
+        const { rows } = await db.query(
+          `SELECT public.can_read_message_attachment($1) AS pode`, [anexoDaConversa]);
+        t.eq(rows[0]?.pode, false, 'a regra deixou de autorizar');
+        await t.deniedOrEmpty(
+          () => db.query(`SELECT name FROM storage.objects WHERE name = $1`, [anexoDaConversa]),
+          'ler o anexo depois de a mensagem ser apagada');
+      });
+    });
+
+    await t.test('a regra não confunde caminho parecido com o anexo', async () => {
+      // A comparação é de caminho inteiro, não de começo de texto. Sem isso,
+      // quem tem direito a `.../abc.pdf` alcançaria `.../abc.pdf.outro`.
+      await db.as(IDS.admin, 'authenticated', async () => {
+        await db.query(
+          `INSERT INTO public.admin_messages (admin_id, fiscal_id, sender_type, message, attachments)
+           VALUES ($1, $2, 'admin', 'Segue o anexo.', ARRAY[$3])`,
+          [IDS.admin, IDS.active, anexoDaConversa]);
+        await db.query(
+          `INSERT INTO storage.objects (bucket_id, name, owner) VALUES ($1, $2, $3)`,
+          [BUCKET, `${anexoDaConversa}.outro`, IDS.admin]);
+      });
+      await db.as(IDS.active, 'authenticated', async () => {
+        const { rows } = await db.query(
+          `SELECT public.can_read_message_attachment($1) AS pode`, [`${anexoDaConversa}.outro`]);
+        t.eq(rows[0]?.pode, false, 'caminho apenas parecido liberado');
+      });
+    });
+
     await t.test('o gatilho recusa documento embutido (base64)', async () => {
       let mensagem = '';
       await db.as(IDS.active, 'authenticated', async () => {

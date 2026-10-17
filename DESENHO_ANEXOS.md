@@ -191,14 +191,20 @@ motivos: a tela lê os anexos junto da mensagem (uma consulta, sem junção), e 
 mesmo arquivo em duas tabelas seriam duas versões da mesma verdade. `documentos`
 segue a mesma lógica: biblioteca do fiscal, casa própria.
 
-**Limitação conhecida, ainda aberta:** o anexo enviado pelo administrador fica na
-pasta dele, porque a política do bucket exige que o primeiro nível do caminho
-seja o id de quem está autenticado. O fiscal, portanto, não lê o arquivo — e é o
-que a tela dele já dizia antes desta migração ("Anexos disponíveis somente no
-painel administrativo"). Corrigir isso é acrescentar uma política de leitura para
-o destinatário da mensagem e passar a exibir os anexos na tela do fiscal. Não foi
-feito agora porque muda o que o app entrega ao fiscal, e essa é uma decisão de
-quem usa o sistema, não de quem escreve o código.
+**Limitação resolvida na migration `20261019000000`:** o anexo enviado pelo
+administrador fica na pasta dele, porque a política do bucket exige que o
+primeiro nível do caminho seja o id de quem está autenticado. O destinatário
+passou a alcançá-lo por uma exceção nomeada — a função
+`can_read_message_attachment(name)` autoriza **o arquivo preso a uma mensagem
+endereçada a quem pergunta**, e nada além disso: um arquivo na pasta do
+administrador que não esteja em nenhuma conversa daquele fiscal continua fora de
+alcance, e apagar a mensagem tira o acesso. A tela do fiscal passou a exibir os
+anexos (miniatura para foto, botão de baixar para documento).
+
+A alternativa — copiar o arquivo para a pasta do destinatário — foi descartada:
+duplicaria o arquivo e criaria duas versões da mesma coisa, que é exatamente o
+que este desenho evita. A exceção é uma linha de política, e é provada por
+teste nos dois sentidos (lê o que é dele, não lê o que não é).
 
 **Sobre a medida das fotos:** mantive 1920 px na galeria (é digitalização de
 documento, inclusive PDF e Word) e 1280 px nas fotos de campo, como combinado.

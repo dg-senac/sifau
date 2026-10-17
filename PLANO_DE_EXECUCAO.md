@@ -116,7 +116,7 @@ Aqui é onde os dois bugs de SQL morrem **por construção**, em vez de remendo.
 - **Renomear coluna não renomeia o que deriva dela:** `documentos.arquivo_data` virou `arquivo_path`, mas a restrição NOT NULL continuou com o nome antigo (`documentos_arquivo_data_not_null`) num banco migrado. Quem pegou foi a conferência de paridade entre os dois caminhos de instalação — nenhuma tela quebraria por isso. A migração agora renomeia a restrição junto, e a suíte guarda o caso.
 - **Limitação que fica aberta (é decisão sua, não minha):** o anexo que o administrador manda no chat fica na pasta dele, porque a política do bucket exige que o primeiro nível do caminho seja o id de quem está autenticado. O fiscal não abre esse arquivo — e a tela dele já dizia "Anexos disponíveis somente no painel administrativo" antes desta migração, então não é regressão: é o comportamento que já existia ficando explícito no banco. Corrigir é acrescentar uma política de leitura para o destinatário da mensagem e exibir o anexo na tela do fiscal; não fiz porque muda o que o app entrega ao fiscal.
 - **Sobrou uma tabela morta para decidir:** `assinaturas_digitais` nunca recebeu uma linha do aplicativo — nenhuma tela escreve nela, só existe o tipo em `src/lib/types.ts`. As colunas `certificado_digital` e `certificado_valido` estão lá para dizer, por escrito, que o sistema NÃO valida certificado digital. É o tipo de sobra que confunde quem lê o schema depois. A remoção é uma migração de poucas linhas, e **não removi sem você mandar**: apagar tabela é irreversível, e essa decisão é sua.
-- **Verificação:** 8 testes novos no banco (um por coluna migrada, cada um afirmando a MENSAGEM do gatilho — recusar por falta de permissão também seria um erro, e passaria como se o gatilho tivesse funcionado), testados ao contrário: removendo o gatilho, o teste cai. Suíte em **101 casos** nos dois caminhos, paridade em 8 dimensões com 11 gatilhos, script ainda re-executável.
+- **Verificação:** 8 testes novos no banco (um por coluna migrada, cada um afirmando a MENSAGEM do gatilho — recusar por falta de permissão também seria um erro, e passaria como se o gatilho tivesse funcionado), testados ao contrário: removendo o gatilho, o teste cai. Suíte em **107 casos** nos dois caminhos, paridade em 8 dimensões com 11 gatilhos, script ainda re-executável.
 
 **✅ Fim da Fase D:** o app e o banco estão prontos — falta só o **passo 9** (aplicar no Supabase, que depende de você) para valer em produção.
 
@@ -148,7 +148,21 @@ Aqui é onde os dois bugs de SQL morrem **por construção**, em vez de remendo.
 
 **✅ Fim da Fase E:** produto sem lacuna bloqueante, com rede de proteção automatizada.
 
-**Pendência desta fase, com decisão já tomada e execução não feita:** o **anexo da conversa** que o administrador envia. Você decidiu liberar para o destinatário ("Sim, liberar para o destinatário"), e isso ainda não foi implementado — hoje a tela do fiscal diz "Anexos disponíveis somente no painel administrativo" (`MessagesScreen.tsx`), porque a política do Storage exige que a pasta seja do próprio usuário. Falta: a política que permite ao fiscal ler o arquivo preso a uma mensagem endereçada a ele, a tela mostrando o anexo, e o teste provando que ele **não** alcança anexo de conversa alheia.
+**Anexo da conversa — feito.** Você decidiu liberar para o destinatário, e a liberação
+foi implementada na migration `20261019000000` + tela:
+
+- a política do bucket ganhou uma terceira condição, `can_read_message_attachment(name)`:
+  o fiscal lê **o arquivo preso a uma mensagem endereçada a ele**;
+- a tela da conversa passou a mostrar o anexo (miniatura clicável para foto, botão de
+  baixar para documento), e anexos antigos gravados em base64 continuam abrindo;
+- o teste prova os dois lados: **lê o que é dele** e **não lê** (a) o anexo da conversa
+  de outro fiscal, (b) outro arquivo qualquer da pasta do administrador, (c) um caminho
+  que só *parece* com o anexo (`...pdf` vs `...pdf.outro`), e (d) o mesmo anexo depois de
+  a mensagem ser apagada — o acesso vem da mensagem, e some com ela.
+
+Duas mutações provaram os testes: tirando a exceção, o teste que exige o acesso reprova;
+alargando a exceção para "qualquer arquivo do administrador", três testes reprovam. Um
+teste que nunca reprovou não protege nada.
 
 ---
 

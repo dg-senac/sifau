@@ -14,7 +14,7 @@
 // ============================================================================
 
 import { createQueueId } from '@/lib/offlineQueue';
-import { buildAnexoPath, removerAnexo, uploadAnexo } from '@/lib/storage';
+import { buildAnexoPath, extensaoDoPath, removerAnexo, uploadAnexo } from '@/lib/storage';
 import { fileUtils } from '@/lib/fileUtils';
 
 export type AnexoDeMensagem = {
@@ -59,6 +59,23 @@ export async function enviarAnexosDeMensagem(anexos: AnexoDeMensagem[]): Promise
 /** Nome sugerido para download. A coluna guarda só o caminho, então o nome é ele. */
 export function nomeDoAnexoDaMensagem(path: string): string {
   return path.split('/').pop() ?? path;
+}
+
+/**
+ * Como chamar o anexo na tela.
+ *
+ * O nome original do arquivo se perdeu quando o anexo saiu de dentro da linha
+ * (a coluna é uma lista de caminhos, e o caminho carrega o id do arquivo para
+ * não colidir com nomes repetidos). Mostrar `3f2a....pdf` para o fiscal não
+ * ajuda ninguém — o que ele precisa saber é se aquilo é foto, PDF ou documento
+ * do Word, porque cada um abre de um jeito.
+ */
+export function rotuloDoAnexo(path: string): string {
+  const extensao = extensaoDoPath(path);
+  if (['jpg', 'jpeg', 'png', 'webp', 'heic', 'gif'].includes(extensao)) return 'Foto';
+  if (extensao === 'pdf') return 'Documento PDF';
+  if (['doc', 'docx'].includes(extensao)) return 'Documento do Word';
+  return 'Arquivo';
 }
 
 /**

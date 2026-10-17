@@ -15,7 +15,7 @@ O script é o `supabase/SETUP_COMPLETO.sql` (2514 linhas, 103 KB).
 usar o projeto atual, o schema novo entra *em cima* do antigo — e como o histórico teve
 37 migrations, sobra objeto que ninguém lembra que existe (função órfã, política antiga,
 coluna morta). Num projeto vazio, o que existe é exatamente o que está escrito no
-script: 19 tabelas, 26 funções, 38 políticas, 11 gatilhos e 1 bucket.
+script: 19 tabelas, 27 funções, 42 políticas, 11 gatilhos e 1 bucket.
 
 Consequências de criar um projeto novo, todas conhecidas e aceitáveis agora:
 
@@ -163,7 +163,14 @@ SELECT id, public, file_size_limit FROM storage.buckets WHERE id = 'sifau-anexos
 SELECT policyname, cmd FROM pg_policies
 WHERE schemaname = 'storage' AND tablename = 'objects' ORDER BY policyname;
 
--- 9. Arquivo fora do banco (esperado: 10 linhas — as 5 colunas que guardam
+-- 9. O destinatário pode abrir o anexo da conversa (esperado: 1 linha).
+--    É a função que a política do bucket usa; sem ela, a tela do fiscal volta a
+--    mostrar "anexo disponível somente no painel administrativo".
+SELECT proname AS funcao
+FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+WHERE n.nspname = 'public' AND p.proname = 'can_read_message_attachment';
+
+-- 10. Arquivo fora do banco (esperado: 10 linhas — as 5 colunas que guardam
 --    CAMINHO e os 5 gatilhos que recusam base64 nelas)
 SELECT 'coluna' AS tipo, table_name || '.' || column_name AS nome
 FROM information_schema.columns
@@ -200,13 +207,14 @@ acompanha: fotos de campo (ocorrência e vistoria), assinatura do autuado, bibli
 documentos e anexos da conversa sobem para o bucket antes de a linha existir — online e
 offline —, e a exibição pede URL assinada na hora.
 
-**Duas coisas continuam sendo decisão sua, não minha:**
+**O anexo da conversa agora abre para o destinatário.** O arquivo continua na pasta de
+quem enviou, mas a política do bucket ganhou uma exceção nomeada
+(`can_read_message_attachment`): o fiscal lê o arquivo que está preso a uma mensagem
+endereçada a ele — e **só esse**. Um arquivo na pasta do administrador que não esteja em
+nenhuma conversa do fiscal continua fora de alcance, e apagar a mensagem tira o acesso.
 
-1. **O fiscal não abre o anexo que o administrador manda no chat.** O arquivo fica na
-   pasta de quem enviou (é o que a política do bucket permite), e a tela dele já dizia
-   "Anexos disponíveis somente no painel administrativo" antes desta migração. Dar
-   acesso ao destinatário é acrescentar uma política de leitura e exibir o anexo na tela
-   do fiscal.
-2. **A tabela `assinaturas_digitais` nunca recebeu uma linha do aplicativo** — existe
+**Uma coisa continua sendo decisão sua, não minha:**
+
+1. **A tabela `assinaturas_digitais` nunca recebeu uma linha do aplicativo** — existe
    para registrar que o sistema NÃO valida certificado digital. Tirar é uma migração de
    poucas linhas, mas apagar tabela é irreversível: só faço com o seu ok.
