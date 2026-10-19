@@ -1,6 +1,6 @@
-import { FormEvent, useEffect, useState } from 'react';
+import { FormEvent, useEffect, useRef, useState } from 'react';
 import {
-  AlertTriangle, CheckCircle2, Loader2, Navigation, RefreshCw, WifiOff,
+  AlertTriangle, CheckCircle2, Loader2, Navigation, RefreshCw, Settings, WifiOff,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { CATEGORIES, Fiscal, SUBCATEGORIES, URGENCY_LEVELS } from '@/lib/types';
@@ -9,6 +9,29 @@ import { PageTitle } from '@/components/ui';
 import { PhotoUpload } from '@/components/PhotoUpload';
 import { createQueueId, enqueue, isRecoverableSyncError } from '@/lib/offlineQueue';
 import { enviarArquivos, gravarAnexos, prepararAnexos, type AnexoPreparado } from '@/lib/anexos';
+import {
+  abrirConfiguracoesDoAplicativo,
+  capturarLocalizacao,
+  emAplicativoNativo,
+  type MotivoDeFalha,
+} from '@/lib/geolocalizacao';
+
+// Mensagem de cada motivo de falha, no idioma e tom do aplicativo. A de
+// bloqueio difere entre APK (temos como abrir as configurações) e navegador
+// (só orienta o caminho manual).
+const MENSAGENS_DE_FALHA: Record<MotivoDeFalha, string> = {
+  'permissao-negada':
+    'Você não permitiu o acesso à localização. O formulário continua como estava — toque novamente em “Capturar localização atual” quando quiser tentar.',
+  'permissao-bloqueada': emAplicativoNativo()
+    ? 'O acesso à localização está bloqueado para o SIFAU neste aparelho. Toque em “Abrir configurações do aplicativo” e permita a localização “somente enquanto o aplicativo estiver em uso”; depois volte e capture novamente.'
+    : 'O acesso à localização está bloqueado para este site no navegador. Libere a permissão de localização nas configurações do site (ícone ao lado do endereço) e tente novamente.',
+  'gps-indisponivel':
+    'Não foi possível obter a localização agora. Verifique se o serviço de localização (GPS) do aparelho está ativado e tente novamente.',
+  'tempo-esgotado':
+    'O GPS demorou demais para encontrar sua posição — comum em ambientes fechados. Se possível, aproxime-se de um local aberto e toque novamente.',
+  'sem-suporte': 'Este aparelho não disponibilizou o serviço de localização.',
+  inesperada: 'Não foi possível obter a localização. Tente novamente.',
+};
 
 export function NewOccurrence({
   fiscal,
@@ -32,6 +55,15 @@ export function NewOccurrence({
   const [offline, setOffline] = useState(!navigator.onLine);
   const [photos, setPhotos] = useState<string[]>([]);
   const [duplicateWarn, setDuplicateWarn] = useState('');
+  // Feedback da captura de localização, separado da `message` do formulário:
+  // falha ou negativa de permissão não apaga nem mistura com o que o fiscal
+  // já preencheu.
+  const [capturandoLocal, setCapturandoLocal] = useState(false);
+  const [avisoLocal, setAvisoLocal] = useState('');
+  const [erroLocal, setErroLocal] = useState<{ motivo: MotivoDeFalha; detalhe?: string } | null>(null);
+  // Guarda em `ref` também: cliques duplicados antes de o estado renderizar
+  // não podem disparar duas caixas de permissão.
+  const capturandoLocalRef = useRef(false);
 
   useEffect(() => {
     const online = () => setOffline(false);
@@ -52,31 +84,43 @@ export function NewOccurrence({
     setClassification(result.motivo);
   };
 
-  const captureLocation = () => {
-    if (!navigator.geolocation) { setMessage('Seu aparelho não disponibilizou a localização.'); return; }
-    setMessage('Obtendo localização...');
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        setLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude });
-        setMessage('');
-      },
-      (error) => {
-        let errorMsg = 'Não foi possível obter a localização.';
-        if (error.code === error.PERMISSION_DENIED) {
-          errorMsg = 'Permita o acesso à localização nas configurações do aparelho.';
-        } else if (error.code === error.POSITION_UNAVAILABLE) {
-          errorMsg = 'Localização indisponível. Verifique o GPS.';
-        } else if (error.code === error.TIMEOUT) {
-          errorMsg = 'Tempo esgotado ao obter localização. Tente novamente.';
-        }
-        setMessage(errorMsg);
-      },
-      {
-        enableHighAccuracy: true,
-        timeout: 15000,
-        maximumAge: 0,
-      }
-    );
+  const capturarLocalizacaoAtual = async () => {
+    // Um clique por vez: nada de duas caixas de permissão ou duas capturas.
+    if (capturandoLocalRef.current) return;
+    capturandoLocalRef.current = true;
+    setCapturandoLocal(true);
+    setErroLocal(null);
+    setAvisoLocal('');
+
+    const resultado = await capturarLocalizacao({
+      // Explicação curta antes da caixa de diálogo do sistema: a localização
+      // serve para identificar onde a ocorrência aconteceu.
+      aoPedirPermissao: () =>
+        setAvisoLocal(
+          'Para identificar onde a ocorrência aconteceu, o SIFAU vai pedir acesso à sua localização — somente enquanto o aplicativo estiver em uso.',
+        ),
+    });
+
+    if (resultado.ok) {
+      setLocation({ lat: resultado.latitude, lng: resultado.longitude });
+      setAvisoLocal(
+        resultado.precisaoMetros
+          ? `Localização capturada (precisão de ~${Math.round(resultado.precisaoMetros)} m). Toque no botão para atualizar.`
+          : 'Localização capturada. Toque no botão para atualizar.',
+      );
+    } else {
+      // Nada do formulário é alterado: o ponto anterior (se havia) continua.
+      // O aviso de "vai pedir permissão" sai para não disputar com o erro.
+      console.warn('Falha ao capturar a localização da ocorrência:', resultado);
+      setAvisoLocal('');
+      setErroLocal({ motivo: resultado.motivo, detalhe: resultado.detalhe });
+    }
+    capturandoLocalRef.current = false;
+    setCapturandoLocal(false);
+  };
+
+  const abrirConfiguracoes = async () => {
+    await abrirConfiguracoesDoAplicativo();
   };
 
   const checkDuplicate = async () => {
@@ -281,10 +325,38 @@ export function NewOccurrence({
             Endereço
             <input required value={form.endereco} onChange={(e) => setForm({ ...form, endereco: e.target.value })} placeholder="Rua, número e complemento" />
           </label>
-          <button type="button" className={`location-button ${location ? 'captured' : ''}`} onClick={captureLocation}>
-            <Navigation size={18} />
-            {location ? `Local capturado (${location.lat.toFixed(4)}, ${location.lng.toFixed(4)})` : 'Capturar localização atual'}
+          <button
+            type="button"
+            className={`location-button ${location ? 'captured' : ''}`}
+            onClick={capturarLocalizacaoAtual}
+            disabled={capturandoLocal}
+          >
+            {capturandoLocal ? <Loader2 className="spin" size={18} /> : <Navigation size={18} />}
+            {capturandoLocal
+              ? 'Obtendo localização...'
+              : location
+                ? `Atualizar localização (${location.lat.toFixed(4)}, ${location.lng.toFixed(4)})`
+                : 'Capturar localização atual'}
           </button>
+          {avisoLocal && !capturandoLocal && (
+            <div className="info-message" role="status"><CheckCircle2 size={16} />{avisoLocal}</div>
+          )}
+          {erroLocal && (
+            <div className="form-message" role="alert">
+              <AlertTriangle size={16} />
+              <span>
+                {MENSAGENS_DE_FALHA[erroLocal.motivo]}
+                {/* O detalhe técnico (mensagem do sistema) só ajuda em falha
+                    inesperada; nos motivos conhecidos a orientação basta. */}
+                {erroLocal.motivo === 'inesperada' && erroLocal.detalhe ? ` (${erroLocal.detalhe})` : ''}
+              </span>
+            </div>
+          )}
+          {erroLocal?.motivo === 'permissao-bloqueada' && emAplicativoNativo() && (
+            <button type="button" className="ghost-button" onClick={abrirConfiguracoes}>
+              <Settings size={16} /> Abrir configurações do aplicativo
+            </button>
+          )}
         </div>
 
         <div className="form-section">
