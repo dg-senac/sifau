@@ -38,4 +38,20 @@
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
+
+    <!--
+      Localização SOMENTE durante o uso: declarar apenas estas duas permissões
+      (e nunca ACCESS_BACKGROUND_LOCATION) faz o Android tratar o acesso como
+      "while in use" — o SIFAU só captura a localização com o aplicativo aberto.
+      O plugin @capacitor/geolocation pede estas permissões em tempo de
+      execução; sem elas no manifesto, o `navigator.geolocation` não funciona
+      dentro do APK.
+    -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+
+    <!-- GPS é opcional: aparelho sem GPS ainda instala e usa a rede/Wi-Fi. -->
+    <uses-feature
+        android:name="android.hardware.location.gps"
+        android:required="false" />
 </manifest>
