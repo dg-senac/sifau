@@ -10,26 +10,45 @@ import {
   X,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
-import { AutoInfracao, Fiscal, OS_ORIGINS, OS_STATUSES, OrdemServico, Vistoria } from '@/lib/types';
-import { FINE_COLUMNS, INSPECTION_COLUMNS } from '@/lib/columns';
+import { Fiscal, OS_ORIGINS, OS_STATUSES, Vistoria } from '@/lib/types';
+import { INSPECTION_COLUMNS } from '@/lib/columns';
 import { PageTitle, EmptyState, Badge, SkeletonList } from '@/components/ui';
+import { FluxoOrdemServico } from '@/components/FluxoOrdemServico';
+import { OS_COLUMNS, salvarEtapaOS, type OrdemComFluxo } from '@/lib/fluxoOS';
+import { capturarLocalizacao, type MotivoDeFalha } from '@/lib/geolocalizacao';
+
+const ERROS_GPS_OS: Record<MotivoDeFalha, string> = {
+  'permissao-negada': 'Permita a localização para capturar o ponto da OS.',
+  'permissao-bloqueada': 'Localização bloqueada. Habilite a permissão nas configurações do aplicativo/site.',
+  'gps-indisponivel': 'Localização indisponível. Verifique se o GPS está ligado.',
+  'tempo-esgotado': 'O GPS demorou demais. Tente novamente em local aberto.',
+  'sem-suporte': 'Este aparelho não disponibiliza localização.',
+  inesperada: 'Não foi possível obter a localização. Tente novamente.',
+};
 
 export function Orders({ fiscal }: { fiscal: Fiscal | null }) {
-  const [orders, setOrders] = useState<OrdemServico[]>([]);
+  const [orders, setOrders] = useState<OrdemComFluxo[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
+  const [arquivo, setArquivo] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [statusFilter, setStatusFilter] = useState('Todos');
-  const [detail, setDetail] = useState<OrdemServico | null>(null);
+  const [detail, setDetail] = useState<OrdemComFluxo | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
-    let query = supabase.from('ordens_servico').select('*').order('emitida_em', { ascending: false });
-    if (statusFilter !== 'Todos') query = query.eq('status', statusFilter);
-    const { data, error } = await query;
-    if (error) console.error('Erro ao carregar ordens de serviço:', error.message);
-    setOrders(data ?? []);
-    setLoading(false);
-  }, [statusFilter]);
+    setLoadError('');
+    try {
+      let query = supabase.from('ordens_servico').select(OS_COLUMNS).order('emitida_em', { ascending: false });
+      if (arquivo) query = query.in('status', ['Concluída', 'Cancelada']);
+      else if (statusFilter !== 'Todos') query = query.eq('status', statusFilter);
+      const { data, error } = await query;
+      if (error) throw error;
+      setOrders((data ?? []) as OrdemComFluxo[]);
+    } catch {
+      setLoadError('Não foi possível carregar as OS. Verifique sua conexão e se a atualização do banco foi aplicada.');
+    } finally { setLoading(false); }
+  }, [statusFilter, arquivo]);
 
   useEffect(() => {
     void load();
@@ -60,10 +79,14 @@ export function Orders({ fiscal }: { fiscal: Fiscal | null }) {
           onCancel={() => setShowForm(false)}
         />
       )}
+      <div className="os-acoes" role="group" aria-label="Visualização de ordens">
+        <button className="outline-button" aria-pressed={!arquivo} onClick={() => setArquivo(false)}>Todas as OS</button>
+        <button className="outline-button" aria-pressed={arquivo} onClick={() => setArquivo(true)}>Histórico de OS concluídas</button>
+      </div>
       <div className="filter-row">
         <div className="select-wrap">
           <ListFilter size={16} />
-          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+          <select disabled={arquivo} value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
             <option>Todos</option>
             {OS_STATUSES.map((s) => (
               <option key={s}>{s}</option>
@@ -72,7 +95,9 @@ export function Orders({ fiscal }: { fiscal: Fiscal | null }) {
         </div>
         <span className="result-count">{orders.length} ordens</span>
       </div>
-      {loading ? (
+      {loadError ? (
+        <div className="form-message" role="alert">{loadError}<button className="outline-button" onClick={() => void load()}>Tentar de novo</button></div>
+      ) : loading ? (
         <SkeletonList linhas={3} label="Carregando ordens de serviço" />
       ) : orders.length === 0 ? (
         <EmptyState icon={<FileText size={28} />} title="Nenhuma ordem de serviço" message="Crie a primeira OS para começar." />
@@ -115,7 +140,7 @@ function OrderForm({
   onCancel: () => void;
 }) {
   const [form, setForm] = useState({
-    numero: `OS-${new Date().getFullYear()}-${String(Math.floor(Math.random() * 9999)).padStart(4, '0')}`,
+    numero: `OS-${new Date().getFullYear()}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`,
     origem: 'Denúncia',
     requerente: '',
     descricao: '',
@@ -128,38 +153,47 @@ function OrderForm({
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
 
-  const captureLocation = () => {
-    if (!navigator.geolocation) return;
-    navigator.geolocation.getCurrentPosition(
-      (pos) => setLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
-      () => setMessage('Não foi possível capturar a localização.'),
-    );
+  const [capturando, setCapturando] = useState(false);
+  const capturandoRef = useRef(false);
+  const captureLocation = async () => {
+    if (capturandoRef.current) return;
+    capturandoRef.current = true; setCapturando(true); setMessage('Obtendo localização da OS...');
+    try {
+      const resultado = await capturarLocalizacao({ aoPedirPermissao: () => setMessage('A localização identifica o local da OS, somente durante o uso do aplicativo.') });
+      if (resultado.ok) {
+        setLocation({ lat: resultado.latitude, lng: resultado.longitude });
+        setMessage('Localização capturada.');
+      } else setMessage(ERROS_GPS_OS[resultado.motivo]);
+    } finally { capturandoRef.current = false; setCapturando(false); }
   };
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (!fiscal) return;
+    if (!fiscal || saving) return;
     setSaving(true);
     setMessage('');
-    const { error } = await supabase.from('ordens_servico').insert({
-      numero: form.numero,
-      origem: form.origem,
-      requerente: form.requerente,
-      descricao: form.descricao,
-      endereco: form.endereco,
-      apoio_operacional: form.apoio,
-      orgao_apoio: form.apoio ? form.orgao_apoio : null,
-      prazo_resposta: new Date(form.prazo).toISOString(),
-      fiscal_abertura: fiscal.id,
-      latitude: location?.lat ?? null,
-      longitude: location?.lng ?? null,
-    });
-    if (error) {
-      setMessage('Erro ao criar ordem. Verifique se o número é único.');
-      setSaving(false);
-      return;
-    }
-    onDone();
+    try {
+      const { error } = await supabase.from('ordens_servico').insert({
+        numero: form.numero,
+        origem: form.origem,
+        requerente: form.requerente,
+        descricao: form.descricao,
+        endereco: form.endereco,
+        apoio_operacional: form.apoio,
+        orgao_apoio: form.apoio ? form.orgao_apoio : null,
+        prazo_resposta: new Date(form.prazo).toISOString(),
+        fiscal_abertura: fiscal.id,
+        latitude: location?.lat ?? null,
+        longitude: location?.lng ?? null,
+      });
+      if (error) {
+        setMessage('Erro ao criar ordem. Verifique se o número é único.');
+        setSaving(false);
+        return;
+      }
+      onDone();
+    } catch { setMessage('Não foi possível criar a OS. Verifique sua conexão.'); }
+    finally { setSaving(false); }
   };
 
   return (
@@ -190,9 +224,9 @@ function OrderForm({
           Endereço
           <input required value={form.endereco} onChange={(e) => setForm({ ...form, endereco: e.target.value })} />
         </label>
-        <button type="button" className={`location-button ${location ? 'captured' : ''}`} onClick={captureLocation}>
+        <button type="button" className={`location-button ${location ? 'captured' : ''}`} onClick={() => void captureLocation()} disabled={capturando}>
           <Navigation size={18} />
-          {location ? 'Local capturado' : 'Capturar localização'}
+          {capturando ? 'Obtendo localização...' : location ? 'Local capturado' : 'Capturar localização'}
         </button>
         <label>
           Apoio operacional
@@ -237,84 +271,59 @@ function OrderForm({
   );
 }
 
-function OrderDetail({ order, fiscal, onClose }: { order: OrdemServico; fiscal: Fiscal | null; onClose: () => void }) {
+function OrderDetail({ order: initialOrder, fiscal, onClose }: { order: OrdemComFluxo; fiscal: Fiscal | null; onClose: () => void }) {
+  const [order, setOrder] = useState(initialOrder);
   const [vistorias, setVistorias] = useState<Vistoria[]>([]);
-  const [autos, setAutos] = useState<AutoInfracao[]>([]);
   const [withinRange, setWithinRange] = useState(false);
   const [checking, setChecking] = useState(false);
   const [message, setMessage] = useState('');
-  const watchId = useRef<number | null>(null);
-
-  useEffect(() => () => {
-    if (watchId.current !== null && navigator.geolocation) {
-      navigator.geolocation.clearWatch(watchId.current);
-    }
-  }, []);
+  const gpsEmAndamento = useRef(false);
+  const [posicao, setPosicao] = useState<{ latitude: number; longitude: number; precisao: number } | null>(null);
 
   useEffect(() => {
     const fetchOrderData = async () => {
-      // Nem as fotos "depois" da vistoria nem a assinatura do autuado são
-      // exibidas aqui — são as duas colunas mais pesadas dessas tabelas.
+      if (!order.ocorrencia_id) { setVistorias([]); return; }
+      // Lista somente laudo e metadados, sem fotos pesadas.
       const { data: vistoriasData } = await supabase
-        .from('vistorias').select(INSPECTION_COLUMNS).eq('ocorrencia_id', order.ocorrencia_id ?? '');
+        .from('vistorias').select(INSPECTION_COLUMNS).eq('ocorrencia_id', order.ocorrencia_id);
       setVistorias(vistoriasData ?? []);
 
-      const { data: autosData } = await supabase
-        .from('autos_infracao').select(FINE_COLUMNS).eq('os_id', order.id);
-      setAutos(autosData ?? []);
     };
 
     fetchOrderData();
-  }, [order]);
+  }, [order.ocorrencia_id]);
 
-  const checkProximity = () => {
-    if (!navigator.geolocation || order.latitude == null || order.longitude == null) {
-      setMessage('Localização do fiscal ou da OS indisponível.');
-      return;
+  const checkProximity = async () => {
+    if (gpsEmAndamento.current) return;
+    if (order.latitude == null || order.longitude == null) {
+      setMessage('Localização da OS indisponível.'); return;
     }
-    if (watchId.current !== null) navigator.geolocation.clearWatch(watchId.current);
-    setChecking(true);
-    setWithinRange(false);
+    gpsEmAndamento.current = true; setChecking(true); setWithinRange(false); setPosicao(null);
     setMessage('Obtendo localização precisa...');
-    watchId.current = navigator.geolocation.watchPosition(
-      (pos) => {
-        const dist = haversine(pos.coords.latitude, pos.coords.longitude, order.latitude!, order.longitude!);
-        const accuracy = pos.coords.accuracy;
-        const isWithinRange = dist + accuracy <= 100;
-        setWithinRange(isWithinRange);
-        setMessage(isWithinRange
-          ? `Localização confirmada: ${Math.round(dist)}m do endereço (precisão ±${Math.round(accuracy)}m).`
-          : `Distância estimada: ${Math.round(dist)}m (precisão ±${Math.round(accuracy)}m). A distância mais a margem de erro precisa ser de até 100m.`);
-        setChecking(false);
-        // Limpar o watch após obter a localização
-        if (watchId.current !== null) {
-          navigator.geolocation.clearWatch(watchId.current);
-          watchId.current = null;
-        }
-      },
-      (error) => {
-        setWithinRange(false);
-        let errorMsg = 'Não foi possível obter sua localização.';
-        if (error.code === error.PERMISSION_DENIED) {
-          errorMsg = 'Permita o acesso à localização nas configurações do aparelho.';
-        } else if (error.code === error.POSITION_UNAVAILABLE) {
-          errorMsg = 'Localização indisponível. Verifique o GPS.';
-        } else if (error.code === error.TIMEOUT) {
-          errorMsg = 'Tempo esgotado ao obter localização. Tente novamente.';
-        }
-        setMessage(errorMsg);
-        if (watchId.current !== null) navigator.geolocation.clearWatch(watchId.current);
-        watchId.current = null;
-        setChecking(false);
-      },
-      { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 },
-    );
+    try {
+      const resultado = await capturarLocalizacao();
+      if (!resultado.ok) { setMessage(ERROS_GPS_OS[resultado.motivo]); return; }
+      const precisao = resultado.precisaoMetros;
+      if (precisao == null || !Number.isFinite(precisao)) {
+        setMessage('O GPS não informou a precisão. Capture novamente para validar os 100 metros.'); return;
+      }
+      const distancia = haversine(resultado.latitude, resultado.longitude, order.latitude, order.longitude);
+      const dentro = distancia + precisao <= 100;
+      setWithinRange(dentro);
+      setPosicao({ latitude: resultado.latitude, longitude: resultado.longitude, precisao });
+      setMessage(dentro ? `Localização confirmada: ${Math.round(distancia)}m (precisão ±${Math.round(precisao)}m).` :
+        `Distância estimada: ${Math.round(distancia)}m (precisão ±${Math.round(precisao)}m). Distância e margem de erro devem somar até 100m.`);
+    } finally { gpsEmAndamento.current = false; setChecking(false); }
   };
 
   const startInspection = async () => {
-    if (!fiscal || !withinRange) return;
-    await supabase.from('ordens_servico').update({ status: 'Em vistoria' }).eq('id', order.id);
-    onClose();
+    if (!fiscal || !withinRange || !posicao || checking) return;
+    setChecking(true);
+    try {
+      setOrder(await salvarEtapaOS(order, 'iniciar', posicao, fiscal));
+      setMessage('Vistoria iniciada.');
+    } catch (error) { setMessage(error instanceof Error ? error.message : 'Não foi possível iniciar.'); }
+    finally { setChecking(false); }
   };
 
   return (
@@ -341,7 +350,7 @@ function OrderDetail({ order, fiscal, onClose }: { order: OrdemServico; fiscal: 
         </div>
       </div>
 
-      {order.status === 'Aberta' && (
+      {order.status === 'Aberta' && fiscal && (order.fiscal_abertura === fiscal.id || order.fiscal_designado === fiscal.id) && (
         <div className="proximity-card">
           <div className="proximity-icon"><Navigation size={20} /></div>
           <div>
@@ -351,14 +360,14 @@ function OrderDetail({ order, fiscal, onClose }: { order: OrdemServico; fiscal: 
         </div>
       )}
 
-      {order.status === 'Aberta' && (
+      {order.status === 'Aberta' && fiscal && (order.fiscal_abertura === fiscal.id || order.fiscal_designado === fiscal.id) && (
         <>
           <button className="outline-button full" onClick={checkProximity} disabled={checking}>
             <Navigation size={16} />
-            {checking ? 'Obtendo localização...' : watchId.current !== null ? 'GPS em acompanhamento' : 'Verificar proximidade'}
+            {checking ? 'Obtendo localização...' : 'Verificar proximidade'}
           </button>
           {message && <div className="info-message"><AlertTriangle size={16} />{message}</div>}
-          <button className="primary-button full" onClick={startInspection} disabled={!withinRange}>
+          <button className="primary-button full" onClick={startInspection} disabled={!withinRange || checking}>
             Iniciar vistoria da OS
           </button>
         </>
@@ -384,28 +393,8 @@ function OrderDetail({ order, fiscal, onClose }: { order: OrdemServico; fiscal: 
         </div>
       )}
 
-      <div className="section-heading" style={{ marginTop: '20px' }}>
-        <h2>Autos de infração ({autos.length})</h2>
-      </div>
-      {autos.length === 0 ? (
-        <span className="muted">Nenhum auto vinculado.</span>
-      ) : (
-        <div className="order-list">
-          {autos.map((a) => (
-            <article className="order-card" key={a.id}>
-              <div className="order-number">
-                {a.tipo_infracao}
-                <Badge danger={a.pagamento === 'Pendente'}>{a.pagamento}</Badge>
-              </div>
-              <h3>R$ {a.valor_multa?.toFixed(2)}</h3>
-              <div className="card-meta">
-                <span>Autuado: {a.autuado_nome}</span>
-                <span>{a.ciencia}</span>
-              </div>
-            </article>
-          ))}
-        </div>
-      )}
+      <FluxoOrdemServico ordem={order} fiscal={fiscal} onChange={setOrder} />
+
     </>
   );
 }

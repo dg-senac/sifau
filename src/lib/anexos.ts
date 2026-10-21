@@ -22,6 +22,7 @@ import {
 export type VinculoAnexo =
   | { ocorrencia_id: string }
   | { vistoria_id: string }
+  | { ordem_servico_id: string }
   | { auto_infracao_id: string };
 
 export type AnexoPreparado = {

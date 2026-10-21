@@ -607,3 +607,15 @@ button.anexo-erro { cursor: pointer; color: var(--vermelho); }
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
   .spin, .anexo-girando, .skeleton::after { animation: none !important; }
 }
+
+/* Tramitação de OS: leitura e ações em telas a partir de 324px. */
+.os-fluxo { margin-top: 24px; overflow-wrap: anywhere; }
+.os-etapas { padding-left: 22px; line-height: 1.7; }
+.os-acoes { display: flex; flex-wrap: wrap; gap: 10px; margin: 16px 0; }
+.os-acoes > button { min-height: 44px; flex: 1 1 180px; white-space: normal; }
+.os-etapa-form fieldset { border: 0; padding: 0; margin: 0; min-width: 0; display: grid; gap: 14px; }
+.os-etapa-form input, .os-etapa-form select, .os-etapa-form textarea { min-width: 0; width: 100%; }
+.os-revisoes { list-style: none; padding: 0; display: grid; gap: 12px; }
+.os-revisoes li { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.os-revisoes button { min-height: 44px; }
+.os-fluxo .form-card { margin-top: 12px; }
