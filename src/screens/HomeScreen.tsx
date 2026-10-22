@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
-  ChevronRight, Clock3, ListFilter, MapPin, Plus, SlidersHorizontal, X,
+  BarChart3, ChevronRight, Clock3, ListFilter, MapPin, Plus, SlidersHorizontal, X,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { Fiscal, Occurrence, Screen } from '@/lib/types';
@@ -93,6 +93,9 @@ export function HomeScreen({
           <small>das atribuídas</small>
         </div>
       </section>
+      <button className="activity-shortcut" onClick={() => onNavigate('dashboard')}>
+        <BarChart3 size={23} aria-hidden="true" /><span><b>Meu acompanhamento</b><small>Ocorrências, OS, documentos e mais</small></span><ChevronRight size={19} aria-hidden="true" />
+      </button>
       <button className="new-report" onClick={() => onNavigate('new')}>
         <div className="new-report-icon"><Plus size={22} /></div>
         <div>
