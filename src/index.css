@@ -634,3 +634,48 @@ button.anexo-erro { cursor: pointer; color: var(--vermelho); }
 .os-decisao-auto { flex-basis: 100%; display: grid; gap: 10px; padding: 16px; border: 1px solid var(--borda); border-radius: 12px; background: var(--azul-tenue); }
 .os-decisao-auto h3, .os-decisao-auto p { margin: 0; overflow-wrap: anywhere; }
 .os-decisao-auto button { min-height: 44px; white-space: normal; }
+
+/* Acabamento leve: mesma identidade, com mais respiro e hierarquia visual.
+   Usa os tokens existentes e preserva as áreas seguras e o movimento reduzido. */
+.topbar { box-shadow: 0 3px 14px var(--sombra-sutil); }
+.page-title { gap: var(--esp-3); }
+.page-title > div { min-width: 0; }
+.page-title > button { flex-shrink: 0; }
+.page-title h1 { line-height: 1.2; overflow-wrap: anywhere; }
+.eyebrow { line-height: 1.5; }
+.section-heading { gap: var(--esp-3); }
+.section-heading h2 { line-height: 1.35; }
+.section-heading > button { flex-shrink: 0; }
+
+.occurrence-card, .order-card, .dashboard-card, .document-item, .form-card {
+  box-shadow: 0 3px 12px var(--sombra-sutil);
+}
+.occurrence-card, .order-card { padding: var(--esp-4); }
+.occurrence-list, .order-list { gap: var(--esp-3); }
+.card-meta { flex-wrap: wrap; row-gap: var(--esp-2); }
+.card-footer { gap: var(--esp-2); flex-wrap: wrap; }
+.dashboard-card { padding: var(--esp-4); margin-bottom: var(--esp-4); }
+.metrics-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--esp-3); }
+.metric-card { min-width: 0; row-gap: var(--esp-1); box-shadow: 0 2px 8px var(--sombra-sutil); }
+.metric-card span { font-size: 11px; line-height: 1.4; overflow-wrap: anywhere; }
+.metric-card b { font-size: 23px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+
+.form-card label, .auth-card label, .filter-panel label { font-size: 12px; line-height: 1.5; }
+.search-box { transition: border-color .15s, box-shadow .15s; }
+.search-box:focus-within { border-color: var(--azul); box-shadow: 0 0 0 3px var(--azul-fundo); }
+.search-box input { color: var(--texto); }
+.search-box input::placeholder { color: var(--texto-tenue); opacity: 1; }
+.primary-button, .secondary-button, .outline-button { min-height: var(--alvo); padding-block: 9px; line-height: 1.35; }
+.icon-button { flex-shrink: 0; }
+.icon-button[aria-expanded="true"] { color: var(--azul); background: var(--azul-fundo); border-color: var(--borda-destacada); }
+.bottom-nav { box-shadow: 0 -4px 18px var(--sombra-sutil); }
+.bottom-nav button.active { box-shadow: inset 0 2px 0 var(--azul); font-weight: 700; }
+.empty-state { padding: var(--esp-5); gap: var(--esp-2); border: 1px dashed var(--borda-media); border-radius: var(--raio-g); background: var(--superficie); }
+.empty-state span { max-width: 32ch; line-height: 1.6; }
+
+/* Hover é apenas um complemento: no celular, os controles seguem visíveis. */
+@media (hover: hover) and (pointer: fine) {
+  .icon-button:not(:disabled):hover, .ghost-button:not(:disabled):hover { background: var(--azul-fundo); color: var(--azul); }
+  .outline-button:not(:disabled):hover { border-color: var(--azul); background: var(--azul-tenue); }
+  .occurrence-card.tapable:hover, .order-card:hover { border-color: var(--borda-destacada); }
+}

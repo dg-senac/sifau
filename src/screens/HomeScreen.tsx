@@ -64,7 +64,14 @@ export function HomeScreen({
         eyebrow={`Olá, ${fiscal?.nome?.split(' ')[0] ?? 'Fiscal'}`}
         title="Central de fiscalização"
         action={
-          <button className="icon-button light" onClick={() => setShowFilters(!showFilters)}>
+          <button
+            className="icon-button light"
+            onClick={() => setShowFilters(!showFilters)}
+            aria-label={showFilters ? 'Fechar filtros' : 'Abrir filtros'}
+            aria-expanded={showFilters}
+            aria-controls={showFilters ? 'filtros-ocorrencias' : undefined}
+            title={showFilters ? 'Fechar filtros' : 'Abrir filtros'}
+          >
             <SlidersHorizontal size={19} />
           </button>
         }
@@ -96,10 +103,10 @@ export function HomeScreen({
       </button>
 
       {showFilters && (
-        <div className="filter-panel">
+        <div className="filter-panel" id="filtros-ocorrencias">
           <div className="filter-panel-header">
             <b>Filtros</b>
-            <button className="icon-button" onClick={() => setShowFilters(false)}><X size={18} /></button>
+            <button className="icon-button" aria-label="Fechar filtros" onClick={() => setShowFilters(false)}><X size={18} /></button>
           </div>
           <label>
             Status
