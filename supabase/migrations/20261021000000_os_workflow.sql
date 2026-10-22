@@ -1,0 +1,364 @@
+-- Tramitação de OS: notificação -> auto opcional -> embargo opcional -> conclusão.
+-- A janela de correção começa na PRIMEIRA conclusão e nunca é prorrogada.
+BEGIN;
+ALTER TABLE public.ordens_servico ADD COLUMN IF NOT EXISTS fluxo jsonb NOT NULL DEFAULT '{}';
+ALTER TABLE public.ordens_servico ADD COLUMN IF NOT EXISTS versao integer NOT NULL DEFAULT 0;
+ALTER TABLE public.ordens_servico ADD COLUMN IF NOT EXISTS concluida_em timestamptz;
+ALTER TABLE public.ordens_servico ADD COLUMN IF NOT EXISTS edicao_ate timestamptz;
+
+CREATE TABLE IF NOT EXISTS public.os_historico (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  os_id uuid NOT NULL REFERENCES public.ordens_servico(id),
+  fiscal_id uuid NOT NULL REFERENCES public.fiscais(id),
+  etapa text NOT NULL,
+  versao integer NOT NULL,
+  dados jsonb NOT NULL,
+  criado_em timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (os_id, versao)
+);
+ALTER TABLE public.os_historico ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.os_historico FROM PUBLIC, anon, authenticated;
+GRANT SELECT ON public.os_historico TO authenticated;
+DROP POLICY IF EXISTS os_historico_leitura ON public.os_historico;
+CREATE POLICY os_historico_leitura ON public.os_historico FOR SELECT TO authenticated
+USING (public.is_admin() OR (public.is_active_fiscal() AND EXISTS (
+  SELECT 1 FROM public.ordens_servico o WHERE o.id = os_id
+  AND (o.fiscal_abertura = auth.uid() OR o.fiscal_designado = auth.uid())
+)));
+DROP TRIGGER IF EXISTS os_historico_imutavel ON public.os_historico;
+CREATE TRIGGER os_historico_imutavel BEFORE UPDATE OR DELETE ON public.os_historico
+FOR EACH ROW EXECUTE FUNCTION public.block_auditoria_mutation();
+
+-- Preserva os autos que já estavam vinculados antes da atualização. Não se
+-- atribui uma autoria que o registro antigo não guardou.
+UPDATE public.ordens_servico o SET fluxo = o.fluxo || jsonb_build_object(
+  'auto_id', a.id, 'auto', to_jsonb(a) || jsonb_build_object(
+    'fiscal_nome', 'Não registrado no auto anterior', 'endereco', o.endereco),
+  'autos_anteriores', COALESCE((SELECT jsonb_agg(to_jsonb(anterior) ORDER BY anterior.created_at, anterior.id)
+    FROM public.autos_infracao anterior WHERE anterior.os_id = o.id AND anterior.id <> a.id), '[]'::jsonb))
+FROM public.autos_infracao a
+WHERE o.id = a.os_id AND o.versao = 0 AND NOT (o.fluxo ? 'auto_id')
+  AND a.id = (SELECT ultimo.id FROM public.autos_infracao ultimo WHERE ultimo.os_id = o.id
+    ORDER BY ultimo.created_at DESC, ultimo.id DESC LIMIT 1);
+INSERT INTO public.os_historico(os_id, fiscal_id, etapa, versao, dados)
+  SELECT id, fiscal_abertura, 'migracao', versao, to_jsonb(o)
+  FROM public.ordens_servico o
+  ON CONFLICT (os_id, versao) DO NOTHING;
+
+-- A OS agora contém dados pessoais de notificação/autuação: somente envolvidos
+-- e administradores podem consultar o dossiê.
+DROP POLICY IF EXISTS orders_select_approved ON public.ordens_servico;
+CREATE POLICY orders_select_approved ON public.ordens_servico FOR SELECT TO authenticated
+USING (public.is_admin() OR (public.is_active_fiscal() AND
+  (fiscal_abertura = auth.uid() OR fiscal_designado = auth.uid())));
+
+CREATE OR REPLACE FUNCTION public.proteger_os_encerrada() RETURNS trigger
+LANGUAGE plpgsql SET search_path = '' AS $$
+BEGIN
+  IF OLD.status IN ('Concluída', 'Cancelada') AND
+     (OLD.edicao_ate IS NULL OR now() >= OLD.edicao_ate) THEN
+    RAISE EXCEPTION 'OS encerrada definitivamente; disponível apenas para consulta.' USING ERRCODE = '42501';
+  END IF;
+  IF TG_OP = 'DELETE' THEN
+    RAISE EXCEPTION 'Preserve a OS no histórico; exclusão não permitida.' USING ERRCODE = '42501';
+  END IF;
+  IF OLD.concluida_em IS NOT NULL AND
+     (NEW.concluida_em IS DISTINCT FROM OLD.concluida_em OR
+      NEW.edicao_ate IS DISTINCT FROM OLD.edicao_ate OR NEW.status <> OLD.status) THEN
+    RAISE EXCEPTION 'A conclusão e seu prazo não podem ser reiniciados.' USING ERRCODE = '42501';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+DROP TRIGGER IF EXISTS os_encerrada_protecao ON public.ordens_servico;
+CREATE TRIGGER os_encerrada_protecao BEFORE UPDATE OR DELETE ON public.ordens_servico
+FOR EACH ROW EXECUTE FUNCTION public.proteger_os_encerrada();
+-- As mudanças operacionais passam pelo RPC (concorrência, prazo e histórico).
+REVOKE UPDATE (status) ON public.ordens_servico FROM authenticated;
+
+CREATE OR REPLACE FUNCTION public.proteger_auto_os() RETURNS trigger
+LANGUAGE plpgsql SET search_path = '' AS $$
+DECLARE o public.ordens_servico; alvo uuid;
+BEGIN
+  IF TG_OP = 'UPDATE' AND OLD.os_id IS DISTINCT FROM NEW.os_id THEN
+    RAISE EXCEPTION 'Não é permitido desvincular ou transferir o auto da OS.';
+  END IF;
+  alvo := CASE WHEN TG_OP = 'DELETE' THEN OLD.os_id ELSE NEW.os_id END;
+  IF alvo IS NOT NULL THEN
+    IF current_user IN ('authenticated', 'anon') THEN
+      RAISE EXCEPTION 'Use a tramitação da OS para registrar o auto.' USING ERRCODE = '42501';
+    END IF;
+    SELECT * INTO o FROM public.ordens_servico WHERE id = alvo FOR UPDATE;
+    IF o.status = 'Cancelada' OR (o.status = 'Concluída' AND
+       (o.edicao_ate IS NULL OR now() >= o.edicao_ate)) THEN
+      RAISE EXCEPTION 'OS encerrada; não é possível alterar seus autos.' USING ERRCODE = '42501';
+    END IF;
+    IF TG_OP = 'DELETE' THEN RAISE EXCEPTION 'Preserve o auto no histórico.'; END IF;
+    IF o.fluxo->'notificacao' IS NULL OR o.ocorrencia_id IS NULL THEN
+      RAISE EXCEPTION 'Vincule uma denúncia e registre a notificação antes do auto.';
+    END IF;
+    IF NEW.ocorrencia_id IS DISTINCT FROM o.ocorrencia_id THEN
+      RAISE EXCEPTION 'A denúncia do auto deve ser a mesma da OS.';
+    END IF;
+  END IF;
+  IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+  RETURN NEW;
+END;
+$$;
+DROP TRIGGER IF EXISTS auto_os_protecao ON public.autos_infracao;
+CREATE TRIGGER auto_os_protecao BEFORE INSERT OR UPDATE OR DELETE ON public.autos_infracao
+FOR EACH ROW EXECUTE FUNCTION public.proteger_auto_os();
+
+CREATE OR REPLACE FUNCTION public.salvar_etapa_os(
+  p_os_id uuid, p_versao integer, p_etapa text, p_dados jsonb DEFAULT '{}'
+) RETURNS public.ordens_servico
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE
+  o public.ordens_servico;
+  a public.autos_infracao;
+  ator uuid := auth.uid();
+  nome_fiscal text;
+  dados jsonb;
+  auto_id uuid;
+  ocorrencia uuid;
+  assinatura text;
+  lat double precision; lng double precision; precisao double precision; distancia double precision;
+BEGIN
+  IF ator IS NULL OR NOT (public.is_admin() OR public.is_active_fiscal()) THEN
+    RAISE EXCEPTION 'Acesso negado.' USING ERRCODE = '42501';
+  END IF;
+  SELECT * INTO o FROM public.ordens_servico WHERE id = p_os_id FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'OS não encontrada.' USING ERRCODE = 'P0002'; END IF;
+  IF NOT COALESCE((public.is_admin() OR o.fiscal_abertura = ator OR o.fiscal_designado = ator), false) THEN
+    RAISE EXCEPTION 'Esta OS não está vinculada a você.' USING ERRCODE = '42501';
+  END IF;
+  IF o.status = 'Cancelada' OR (o.status = 'Concluída' AND
+     (o.edicao_ate IS NULL OR now() >= o.edicao_ate)) THEN
+    RAISE EXCEPTION 'Prazo encerrado. A OS está disponível apenas para consulta.' USING ERRCODE = '42501';
+  END IF;
+  IF p_versao IS DISTINCT FROM o.versao THEN
+    RAISE EXCEPTION 'A OS foi atualizada em outro aparelho. Recarregue antes de salvar.' USING ERRCODE = '40001';
+  END IF;
+  IF p_dados IS NULL OR jsonb_typeof(p_dados) <> 'object' OR octet_length(p_dados::text) > 60000 THEN
+    RAISE EXCEPTION 'Dados inválidos ou muito extensos.' USING ERRCODE = '22023';
+  END IF;
+  SELECT nome INTO nome_fiscal FROM public.fiscais WHERE id = ator;
+  assinatura := NULLIF(p_dados->>'assinatura', '');
+  IF assinatura IS NOT NULL AND (
+    split_part(assinatura, '/', 1) <> ator::text OR
+    NOT EXISTS (SELECT 1 FROM public.anexos x WHERE x.storage_path = assinatura
+      AND x.fiscal_id = ator AND x.ordem_servico_id = o.id AND x.tipo = 'assinatura')
+  ) THEN RAISE EXCEPTION 'Assinatura inválida ou não vinculada à OS.'; END IF;
+
+  IF p_etapa = 'editar' THEN
+    ocorrencia := NULLIF(p_dados->>'ocorrencia_id', '')::uuid;
+    IF ocorrencia IS NOT NULL AND NOT EXISTS (
+      SELECT 1 FROM public.ocorrencias c WHERE c.id = ocorrencia
+      AND (public.is_admin() OR c.fiscal_registrou = ator OR c.fiscal_designado = ator)
+    ) THEN RAISE EXCEPTION 'Escolha uma denúncia registrada por você ou designada a você.'; END IF;
+    IF EXISTS (SELECT 1 FROM public.autos_infracao WHERE os_id = o.id)
+       AND ocorrencia IS DISTINCT FROM o.ocorrencia_id THEN
+      RAISE EXCEPTION 'A denúncia não pode mudar após a emissão de auto.';
+    END IF;
+    IF btrim(COALESCE(p_dados->>'descricao', '')) = '' OR
+       btrim(COALESCE(p_dados->>'endereco', '')) = '' OR
+       btrim(COALESCE(p_dados->>'requerente', '')) = '' THEN
+      RAISE EXCEPTION 'Preencha descrição, endereço e requerente.';
+    END IF;
+    o.descricao := btrim(p_dados->>'descricao');
+    o.endereco := btrim(p_dados->>'endereco');
+    o.requerente := btrim(p_dados->>'requerente');
+    o.ocorrencia_id := ocorrencia;
+  ELSIF p_etapa IN ('notificacao', 'embargo') THEN
+    IF btrim(COALESCE(p_dados->>'nome', '')) = '' OR
+       btrim(COALESCE(p_dados->>'texto', '')) = '' OR
+       btrim(COALESCE(p_dados->>'endereco', '')) = '' THEN
+      RAISE EXCEPTION 'Informe responsável, endereço e descrição do documento.';
+    END IF;
+    IF p_etapa = 'embargo' AND NOT EXISTS (SELECT 1 FROM public.autos_infracao WHERE os_id = o.id) THEN
+      RAISE EXCEPTION 'Registre o auto antes de emitir um embargo.';
+    END IF;
+    IF p_etapa = 'embargo' AND btrim(COALESCE(p_dados->>'fundamento', '')) = '' THEN
+      RAISE EXCEPTION 'Informe o fundamento legal do embargo.';
+    END IF;
+    dados := jsonb_build_object('nome', btrim(p_dados->>'nome'),
+      'documento', COALESCE(p_dados->>'documento', ''), 'endereco', btrim(p_dados->>'endereco'),
+      'texto', btrim(p_dados->>'texto'), 'fundamento', COALESCE(p_dados->>'fundamento', ''),
+      'ciencia', COALESCE(p_dados->>'ciencia', 'Não registrada'),
+      'assinatura', assinatura, 'fiscal_nome', nome_fiscal, 'fiscal_id', ator,
+      'registrado_em', COALESCE(o.fluxo->p_etapa->>'registrado_em', now()::text),
+      'atualizado_em', now());
+    IF dados->>'ciencia' NOT IN ('Assinou', 'Recusou', 'Ausente', 'Não registrada') THEN
+      RAISE EXCEPTION 'Ciência inválida.';
+    END IF;
+    IF dados->>'ciencia' = 'Assinou' AND assinatura IS NULL THEN
+      RAISE EXCEPTION 'Capture a assinatura ou altere a ciência.';
+    END IF;
+    o.fluxo := jsonb_set(o.fluxo, ARRAY[p_etapa], dados);
+  ELSIF p_etapa = 'auto' THEN
+    IF o.fluxo->'notificacao' IS NULL OR o.ocorrencia_id IS NULL THEN
+      RAISE EXCEPTION 'Vincule uma denúncia e registre a notificação antes do auto.';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM public.ocorrencias c WHERE c.id = o.ocorrencia_id
+      AND (public.is_admin() OR c.fiscal_registrou = ator OR c.fiscal_designado = ator)) THEN
+      RAISE EXCEPTION 'A denúncia não está vinculada a você.' USING ERRCODE = '42501';
+    END IF;
+    IF btrim(COALESCE(p_dados->>'autuado_nome', '')) = '' OR
+       btrim(COALESCE(p_dados->>'autuado_documento', '')) = '' OR
+       btrim(COALESCE(p_dados->>'artigo_legal', '')) = '' OR
+       btrim(COALESCE(p_dados->>'tipo_infracao', '')) = '' OR
+       btrim(COALESCE(p_dados->>'motivo', '')) = '' THEN
+      RAISE EXCEPTION 'Preencha autuado, documento, infração, motivo e fundamento legal.';
+    END IF;
+    IF p_dados->>'ciencia' = 'Assinou' AND assinatura IS NULL THEN
+      RAISE EXCEPTION 'Capture a assinatura ou altere a ciência.';
+    END IF;
+    auto_id := NULLIF(o.fluxo->>'auto_id', '')::uuid;
+    IF auto_id IS NULL THEN
+      INSERT INTO public.autos_infracao(os_id, ocorrencia_id, tipo_infracao, artigo_legal,
+        valor_base, valor_multa, motivo, autuado_nome, autuado_documento,
+        ciencia, assinatura_autuado, testemunha_nome, vencimento)
+      VALUES (o.id, o.ocorrencia_id, p_dados->>'tipo_infracao', p_dados->>'artigo_legal',
+        (p_dados->>'valor_base')::numeric, (p_dados->>'valor_multa')::numeric,
+        p_dados->>'motivo', p_dados->>'autuado_nome', p_dados->>'autuado_documento',
+        p_dados->>'ciencia', assinatura, NULLIF(p_dados->>'testemunha_nome', ''),
+        (p_dados->>'vencimento')::date) RETURNING * INTO a;
+    ELSE
+      UPDATE public.autos_infracao SET tipo_infracao = p_dados->>'tipo_infracao',
+        artigo_legal = p_dados->>'artigo_legal', valor_base = (p_dados->>'valor_base')::numeric,
+        valor_multa = (p_dados->>'valor_multa')::numeric, motivo = p_dados->>'motivo',
+        autuado_nome = p_dados->>'autuado_nome', autuado_documento = p_dados->>'autuado_documento',
+        ciencia = p_dados->>'ciencia', assinatura_autuado = assinatura,
+        testemunha_nome = NULLIF(p_dados->>'testemunha_nome', ''), vencimento = (p_dados->>'vencimento')::date
+      WHERE id = auto_id AND os_id = o.id RETURNING * INTO a;
+      IF NOT FOUND THEN RAISE EXCEPTION 'Auto vinculado não encontrado.'; END IF;
+    END IF;
+    o.fluxo := o.fluxo || jsonb_build_object('auto_id', a.id,
+      'auto', to_jsonb(a) || jsonb_build_object('fiscal_nome', nome_fiscal,
+        'fiscal_id', ator, 'endereco', o.endereco, 'atualizado_em', now()));
+  ELSIF p_etapa = 'concluir' THEN
+    IF btrim(COALESCE(p_dados->>'texto', '')) = '' THEN
+      RAISE EXCEPTION 'Registre o resultado, inclusive quando não houver auto ou embargo.';
+    END IF;
+    o.status := 'Concluída';
+    IF o.concluida_em IS NULL THEN
+      o.concluida_em := now();
+      o.edicao_ate := now() + interval '48 hours';
+    END IF;
+    o.fluxo := o.fluxo || jsonb_build_object('conclusao', jsonb_build_object(
+      'texto', p_dados->>'texto', 'assinatura', assinatura, 'fiscal_nome', nome_fiscal,
+      'fiscal_id', ator, 'registrado_em', o.concluida_em, 'atualizado_em', now()));
+  ELSIF p_etapa = 'iniciar' THEN
+    IF o.status <> 'Aberta' THEN RAISE EXCEPTION 'OS não está aberta.'; END IF;
+    lat := (p_dados->>'latitude')::double precision;
+    lng := (p_dados->>'longitude')::double precision;
+    precisao := (p_dados->>'precisao')::double precision;
+    IF (lat BETWEEN -90 AND 90 AND lng BETWEEN -180 AND 180 AND precisao BETWEEN 0 AND 100) IS NOT TRUE
+       OR o.latitude IS NULL OR o.longitude IS NULL THEN
+      RAISE EXCEPTION 'Capture uma localização válida com precisão para validar a proximidade.';
+    END IF;
+    distancia := 12742000 * asin(sqrt(least(1.0,
+      power(sin(radians((o.latitude::double precision - lat) / 2)), 2) +
+      cos(radians(lat)) * cos(radians(o.latitude::double precision)) *
+      power(sin(radians((o.longitude::double precision - lng) / 2)), 2))));
+    IF distancia + precisao > 100 THEN RAISE EXCEPTION 'A vistoria exige distância e margem de erro de até 100m.'; END IF;
+    o.status := 'Em vistoria';
+  ELSE
+    RAISE EXCEPTION 'Etapa inválida.' USING ERRCODE = '22023';
+  END IF;
+
+  UPDATE public.ordens_servico SET fluxo = o.fluxo, versao = versao + 1,
+    status = o.status, concluida_em = o.concluida_em, edicao_ate = o.edicao_ate,
+    descricao = o.descricao, endereco = o.endereco, requerente = o.requerente,
+    ocorrencia_id = o.ocorrencia_id WHERE id = o.id RETURNING * INTO o;
+  INSERT INTO public.os_historico(os_id, fiscal_id, etapa, versao, dados)
+    VALUES (o.id, ator, p_etapa, o.versao, to_jsonb(o));
+  RETURN o;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.salvar_etapa_os(uuid, integer, text, jsonb) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.salvar_etapa_os(uuid, integer, text, jsonb) TO authenticated;
+
+-- Retrato do nome do fiscal na emissão (não depende de alterações futuras no perfil).
+CREATE OR REPLACE FUNCTION public.preparar_emissao_os() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+BEGIN
+  NEW.fluxo := jsonb_build_object('fiscal_abertura_nome',
+    (SELECT f.nome FROM public.fiscais f WHERE f.id = NEW.fiscal_abertura));
+  RETURN NEW;
+END;
+$$;
+DROP TRIGGER IF EXISTS os_emissao_identificacao ON public.ordens_servico;
+CREATE TRIGGER os_emissao_identificacao BEFORE INSERT ON public.ordens_servico
+FOR EACH ROW EXECUTE FUNCTION public.preparar_emissao_os();
+
+-- Guarda a emissão inicial, valida o vínculo também para clientes fora do app.
+CREATE OR REPLACE FUNCTION public.registrar_criacao_os() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+BEGIN
+  IF NEW.ocorrencia_id IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM public.ocorrencias c WHERE c.id = NEW.ocorrencia_id
+    AND (public.is_admin() OR c.fiscal_registrou = auth.uid() OR c.fiscal_designado = auth.uid())
+  ) THEN RAISE EXCEPTION 'Escolha uma denúncia registrada por você ou designada a você.'; END IF;
+  INSERT INTO public.os_historico(os_id, fiscal_id, etapa, versao, dados)
+    VALUES (NEW.id, NEW.fiscal_abertura, 'criacao', 0, to_jsonb(NEW));
+  RETURN NEW;
+END;
+$$;
+DROP TRIGGER IF EXISTS os_criacao_historico ON public.ordens_servico;
+CREATE TRIGGER os_criacao_historico AFTER INSERT ON public.ordens_servico
+FOR EACH ROW EXECUTE FUNCTION public.registrar_criacao_os();
+
+-- Protege arquivos que já integram um dossiê/revisão, inclusive contra remoção
+-- pelo proprietário via API de Storage. O acesso continua privado e com RLS.
+CREATE OR REPLACE FUNCTION public.arquivo_preservado_os(p_path text) RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
+  SELECT EXISTS (SELECT 1 FROM public.documentos d
+    WHERE d.arquivo_path = p_path AND d.ordem_servico_id IS NOT NULL
+      AND d.metadados->>'origem' = 'fluxo_os')
+  OR EXISTS (SELECT 1 FROM public.os_historico h WHERE
+    h.dados->'fluxo'->'notificacao'->>'assinatura' = p_path OR
+    h.dados->'fluxo'->'auto'->>'assinatura_autuado' = p_path OR
+    h.dados->'fluxo'->'embargo'->>'assinatura' = p_path OR
+    h.dados->'fluxo'->'conclusao'->>'assinatura' = p_path OR
+    EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(h.dados->'fluxo'->'autos_anteriores', '[]'::jsonb)) anterior
+      WHERE anterior->>'assinatura_autuado' = p_path));
+$$;
+REVOKE ALL ON FUNCTION public.arquivo_preservado_os(text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.arquivo_preservado_os(text) TO authenticated;
+DROP POLICY IF EXISTS os_arquivo_sem_exclusao ON storage.objects;
+CREATE POLICY os_arquivo_sem_exclusao ON storage.objects AS RESTRICTIVE FOR DELETE TO authenticated
+USING (bucket_id <> 'sifau-anexos' OR NOT public.arquivo_preservado_os(name));
+DROP POLICY IF EXISTS os_arquivo_sem_sobrescrita ON storage.objects;
+CREATE POLICY os_arquivo_sem_sobrescrita ON storage.objects AS RESTRICTIVE FOR UPDATE TO authenticated
+USING (bucket_id <> 'sifau-anexos' OR NOT public.arquivo_preservado_os(name))
+WITH CHECK (bucket_id <> 'sifau-anexos' OR NOT public.arquivo_preservado_os(name));
+
+CREATE OR REPLACE FUNCTION public.proteger_documento_os() RETURNS trigger
+LANGUAGE plpgsql SET search_path = '' AS $$
+BEGIN
+  IF OLD.ordem_servico_id IS NOT NULL AND OLD.metadados->>'origem' = 'fluxo_os' THEN
+    RAISE EXCEPTION 'O dossiê da OS integra o histórico e não pode ser removido ou alterado.' USING ERRCODE = '42501';
+  END IF;
+  IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+  RETURN NEW;
+END;
+$$;
+DROP TRIGGER IF EXISTS documento_os_preservado ON public.documentos;
+CREATE TRIGGER documento_os_preservado BEFORE UPDATE OR DELETE ON public.documentos
+FOR EACH ROW EXECUTE FUNCTION public.proteger_documento_os();
+
+CREATE OR REPLACE FUNCTION public.proteger_anexo_os() RETURNS trigger
+LANGUAGE plpgsql SET search_path = '' AS $$
+BEGIN
+  IF public.arquivo_preservado_os(OLD.storage_path) THEN
+    RAISE EXCEPTION 'A assinatura integra uma revisão da OS e deve ser preservada.' USING ERRCODE = '42501';
+  END IF;
+  RETURN OLD;
+END;
+$$;
+DROP TRIGGER IF EXISTS anexo_os_preservado ON public.anexos;
+CREATE TRIGGER anexo_os_preservado BEFORE DELETE ON public.anexos
+FOR EACH ROW EXECUTE FUNCTION public.proteger_anexo_os();
+
+COMMIT;
