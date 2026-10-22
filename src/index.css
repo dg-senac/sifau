@@ -630,3 +630,7 @@ button.anexo-erro { cursor: pointer; color: var(--vermelho); }
 .exportar-controles button { flex: 1 1 160px; min-height: 44px; white-space: normal; }
 .exportar-relatorio .form-message { color: var(--vermelho-texto); }
 .audit-hash, .info-message { overflow-wrap: anywhere; }
+
+.os-decisao-auto { flex-basis: 100%; display: grid; gap: 10px; padding: 16px; border: 1px solid var(--borda); border-radius: 12px; background: var(--azul-tenue); }
+.os-decisao-auto h3, .os-decisao-auto p { margin: 0; overflow-wrap: anywhere; }
+.os-decisao-auto button { min-height: 44px; white-space: normal; }

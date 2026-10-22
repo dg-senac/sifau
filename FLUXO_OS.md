@@ -102,3 +102,25 @@ prorrogação, histórico imutável, arquivos preservados e proximidade com prec
 - Corrigir dentro de 48h e conferir que a data limite não muda.
 - Em homologação, simular expiração e confirmar somente leitura inclusive após
   recarregar, alterar relógio do telefone e tentar chamar a API diretamente.
+
+## Atualização: decisão explícita e modelo institucional
+
+- O fiscal vê **Emitir auto de infração** e **Não emitir auto**.
+- Não emitir exige justificativa, persiste no histórico e no PDF e não conclui a
+  OS. A escolha pode ser revista no prazo de edição, mas nunca apaga um auto já emitido.
+- Emitir apenas abre o formulário após registrar a decisão: a multa só é criada
+  quando o fiscal preenche e confirma o auto. A API recusa emissão se a escolha
+  salva ainda for não emitir.
+- Acrescentada a migration `20261022000000_os_auto_decision.sql`. Para quem ainda
+  não aplicou a atualização anterior, `entrega/SQL_EDITOR_OS_COMPLETO.txt` reúne
+  ambas em uma transação para copiar no SQL Editor. O arquivo completo também é
+  reaplicável e foi testado como entregue. Não substitui as migrations anteriores
+  ao fluxo de OS nem instala um projeto vazio.
+- PDF com cabeçalho do Município do Cabo de Santo Agostinho / Pernambuco, seções
+  numeradas, assinatura preservando proporção, referências, revisão e páginas.
+  Não há brasão, CNPJ, secretaria, matrícula ou fundamento legal inventados.
+  É um modelo institucional sujeito à validação do órgão, não uma afirmação de
+  adoção oficial. Para aplicar brasão/identidade exata, fornecer arquivos oficiais.
+- Os novos PDFs usam `modelo_pdf: cabo-institucional-v1` nos metadados: arquivos
+  já arquivados são preservados; um download com o novo modelo pode gerar outra
+  cópia da mesma revisão, sem sobrescrever a anterior.
