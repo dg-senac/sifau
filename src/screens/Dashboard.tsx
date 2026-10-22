@@ -11,6 +11,9 @@ import { supabase } from '@/lib/supabase';
 import { OCCURRENCE_STATUSES } from '@/lib/types';
 import { OCCURRENCE_EXPORT_COLUMNS } from '@/lib/columns';
 import { PageTitle, SkeletonList } from '@/components/ui';
+import { ExportarRelatorio } from '@/components/ExportarRelatorio';
+import { baixarArquivo, carregarPaginas, gerarArquivoRelatorio, type FormatoRelatorio } from '@/lib/relatorios';
+import { COLUNAS_OCORRENCIAS } from '@/lib/modelosRelatorios';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 
@@ -211,25 +214,14 @@ export function Dashboard() {
   const compliance = stats.total ? Math.round((stats.resolved / stats.total) * 100) : 0;
   const maxStatus = Math.max(...byStatus.map((s) => s.count), 1);
 
-  const exportCSV = async () => {
-    // A exportação monta 10 colunas de texto. Antes ela pedia `*`, o que
-    // baixava os anexos de todas as ocorrências do banco para descartá-los.
-    const { data } = await supabase.from('ocorrencias').select(OCCURRENCE_EXPORT_COLUMNS);
-    if (!data || data.length === 0) return;
-    // `as const` mantém a união literal dos cabeçalhos. Com isso o TypeScript
-    // verifica que cada cabeçalho corresponde a uma coluna realmente buscada.
-    const headers = ['id', 'categoria', 'subcategoria', 'descricao', 'status', 'urgencia', 'bairro', 'endereco', 'created_at', 'sla_deadline'] as const;
-    const rows = data.map((row) =>
-      headers.map((h) => `"${String(row[h] ?? '').replace(/"/g, '""')}"`).join(','),
-    );
-    const csv = [headers.join(','), ...rows].join('\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `ocorrencias_sifau_${new Date().toISOString().slice(0, 10)}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+  const exportarOcorrencias = async (formato: FormatoRelatorio | 'json') => {
+    if (formato === 'json') return;
+    const geradoEm = new Date();
+    const dados = await carregarPaginas((inicio, fim) => supabase.from('ocorrencias').select(OCCURRENCE_EXPORT_COLUMNS)
+      .lte('created_at', geradoEm.toISOString()).order('created_at', { ascending: true }).order('id', { ascending: true }).range(inicio, fim));
+    baixarArquivo(await gerarArquivoRelatorio({ titulo: 'Ocorrências urbanas', nomeArquivo: 'ocorrencias_sifau',
+      escopo: 'Todas as ocorrências acessíveis à sua conta, até o início da exportação. Não se limita ao mapa dos últimos 30 dias.',
+      colunas: COLUNAS_OCORRENCIAS, linhas: dados, geradoEm }, formato));
   };
 
   // Enquanto os números chegam, a forma do painel aparece — e não uma tela
@@ -261,10 +253,11 @@ export function Dashboard() {
         <Metric icon={<Clock3 size={18} />} label="Cumprimento" value={`${compliance}%`} tone="yellow" />
       </div>
 
+      <ExportarRelatorio titulo="Exportar ocorrências" escopo="Todas as ocorrências acessíveis à sua conta, não apenas os pontos no mapa dos últimos 30 dias." onExport={exportarOcorrencias} />
       <section className="dashboard-card">
         <div className="section-heading">
           <h2>Distribuição por status</h2>
-          <button onClick={exportCSV} className="export-button">Exportar CSV</button>
+
         </div>
         <div className="bar-chart">
           {byStatus.map((s) => (

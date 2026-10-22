@@ -33,6 +33,9 @@ import {
 } from '@/lib/mensagens';
 import { AnexoImagem, BotaoBaixarAnexo } from '@/components/StorageFile';
 import { EmptyState } from '@/components/ui';
+import { ExportarRelatorio } from '@/components/ExportarRelatorio';
+import { baixarArquivo, carregarPaginas, gerarArquivoRelatorio, type FormatoRelatorio } from '@/lib/relatorios';
+import { COLUNAS_FISCAIS } from '@/lib/modelosRelatorios';
 
 type FiscalWithStatus = Fiscal & {
   is_online: boolean;
@@ -560,34 +563,16 @@ export function AdminScreen() {
     if (error) setActionMessage('Não foi possível encerrar a sessão.');
   };
 
-  const exportData = async () => {
-    const { data, error } = await supabase.from('fiscais').select('*');
-    if (error || !data) {
-      setActionMessage('Não foi possível exportar os fiscais.');
-      return;
-    }
-
-    const csvValue = (value: unknown) => {
-      const text = String(value ?? '');
-      const firstFormulaCharacter = text.trimStart()[0] ?? '';
-      const safeText = /^[=+\-@]/.test(firstFormulaCharacter) || /^[\t\r\n]/.test(text)
-        ? `'${text}`
-        : text;
-      return `"${safeText.replace(/"/g, '""')}"`;
-    };
-    const headers = ['ID', 'Nome', 'Email', 'Telefone', 'Bairro', 'Especialidade', 'Ativo', 'Criado em'];
-    const rows = data.map((fiscal) => [
-      fiscal.id, fiscal.nome, fiscal.email, fiscal.telefone, fiscal.bairro,
-      fiscal.especialidade, fiscal.ativo ? 'Sim' : 'Não', fiscal.created_at,
-    ].map(csvValue).join(','));
-    const csv = [headers.map(csvValue).join(','), ...rows].join('\r\n');
-    const blob = new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `fiscais_export_${new Date().toISOString().split('T')[0]}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+  const [mostrarExportacao, setMostrarExportacao] = useState(false);
+  const exportData = async (formato: FormatoRelatorio | 'json') => {
+    if (formato === 'json') return;
+    const geradoEm = new Date();
+    const dados = await carregarPaginas((inicio, fim) => supabase.from('fiscais')
+      .select('id, nome, email, telefone, bairro, especialidade, ativo, created_at')
+      .lte('created_at', geradoEm.toISOString()).order('created_at', { ascending: true }).order('id', { ascending: true }).range(inicio, fim));
+    baixarArquivo(await gerarArquivoRelatorio({ titulo: 'Diretório de fiscais', nomeArquivo: 'fiscais_sifau',
+      escopo: 'Todos os fiscais acessíveis ao administrador. Os filtros da tela não se aplicam a este arquivo. Situação cadastral indica a ativação do perfil; banimentos são controles separados.',
+      colunas: COLUNAS_FISCAIS, linhas: dados.map((f) => ({ ...f, situacao: f.ativo ? 'Ativo' : 'Pendente / desativado' })), geradoEm }, formato));
   };
 
   if (loading) {
@@ -625,7 +610,7 @@ export function AdminScreen() {
           <button onClick={handleRefresh} disabled={refreshing} className="icon-button">
             <RefreshCw className={refreshing ? 'spin' : ''} size={20} />
           </button>
-          <button onClick={exportData} className="icon-button">
+          <button onClick={() => setMostrarExportacao((aberto) => !aberto)} className="icon-button" aria-label="Exportar fiscais" title="Exportar fiscais" aria-expanded={mostrarExportacao}>
             <Download size={20} />
           </button>
           <button onClick={() => { setShowLogs(true); loadLogs(); }} className="icon-button">
@@ -639,6 +624,7 @@ export function AdminScreen() {
       {pageError && <div className="form-message" role="alert"><AlertTriangle size={16} />{pageError}</div>}
       {actionMessage && <div className="form-message" role="status"><AlertTriangle size={16} />{actionMessage}</div>}
 
+      {mostrarExportacao && <ExportarRelatorio titulo="Exportar fiscais" escopo="Lista completa de fiscais, independentemente da busca e dos filtros da tela. Contém dados pessoais: compartilhe somente com pessoas autorizadas." onExport={exportData} />}
       {/* Stats Cards */}
       <div className="admin-stats">
         <div className="stat-card">
