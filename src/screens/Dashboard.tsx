@@ -256,7 +256,7 @@ export function Dashboard() {
       <ExportarRelatorio titulo="Exportar ocorrências" escopo="Todas as ocorrências acessíveis à sua conta, não apenas os pontos no mapa dos últimos 30 dias." onExport={exportarOcorrencias} />
       <section className="dashboard-card">
         <div className="section-heading">
-          <h2>Distribuição por status</h2>
+          <h2>Andamento das ocorrências</h2>
 
         </div>
         <div className="bar-chart">
