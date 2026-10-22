@@ -4,9 +4,9 @@ import { supabase } from '@/lib/supabase';
 import { OCCURRENCE_COLUMNS } from '@/lib/columns';
 import type { Fiscal, Occurrence } from '@/lib/types';
 import { SignaturePad } from './SignaturePad';
-import { OS_COLUMNS, baixarDossieOS, osBloqueada, salvarEtapaOS, type DocumentoOS, type EtapaOS, type OrdemComFluxo, type RevisaoOS } from '@/lib/fluxoOS';
+import { OS_COLUMNS, decidirAutoOS, baixarDossieOS, osBloqueada, salvarEtapaOS, type DocumentoOS, type EtapaOS, type OrdemComFluxo, type RevisaoOS } from '@/lib/fluxoOS';
 
-const titulos: Record<EtapaOS | 'criacao' | 'migracao', string> = { criacao: 'Criação da OS', migracao: 'Registro anterior à atualização', editar: 'Editar OS / vincular denúncia', iniciar: 'Iniciar vistoria',
+const titulos: Record<EtapaOS | 'criacao' | 'migracao' | 'decisao_auto', string> = { decisao_auto: 'Decisão sobre auto de infração', criacao: 'Criação da OS', migracao: 'Registro anterior à atualização', editar: 'Editar OS / vincular denúncia', iniciar: 'Iniciar vistoria',
   notificacao: 'Notificação', auto: 'Auto de infração', embargo: 'Termo de embargo', concluir: 'Concluir OS' };
 const dataHora = (valor: string) => new Date(valor).toLocaleString('pt-BR');
 
@@ -14,6 +14,8 @@ export function FluxoOrdemServico({ ordem, fiscal, onChange }: {
   ordem: OrdemComFluxo; fiscal: Fiscal | null; onChange: (ordem: OrdemComFluxo) => void;
 }) {
   const [etapa, setEtapa] = useState<EtapaOS | null>(null);
+  const [semAuto, setSemAuto] = useState(false);
+  const decidindo = useRef(false);
   const [historico, setHistorico] = useState<RevisaoOS[]>([]);
   const [erroHistorico, setErroHistorico] = useState(false);
   const [mensagem, setMensagem] = useState('');
@@ -49,13 +51,23 @@ export function FluxoOrdemServico({ ordem, fiscal, onChange }: {
     } catch { setMensagem('Não foi possível atualizar a OS. Tente novamente.'); }
     finally { setOcupado(false); }
   }
+  async function emitir() {
+    if (decidindo.current) return;
+    decidindo.current = true;
+    setOcupado(true); setMensagem('Registrando decisão...');
+    try {
+      const salva = await decidirAutoOS(ordem, true);
+      onChange(salva); setEtapa('auto'); setMensagem('Preencha e confirme o auto. Escolher emitir, sozinho, não gera multa.');
+    } catch (erro) { setMensagem(erro instanceof Error ? erro.message : 'Não foi possível registrar.'); }
+    finally { decidindo.current = false; setOcupado(false); }
+  }
   return <section className="os-fluxo" aria-label="Tramitação da ordem de serviço">
     <h2>Andamento da OS</h2>
     <p className="muted">OS → Notificação → Auto de infração, se necessário → Embargo, se aplicável.</p>
     <ol className="os-etapas">
       <li>OS criada em {dataHora(ordem.emitida_em)}</li>
       <li>{ordem.fluxo.notificacao ? 'Notificação registrada' : 'Notificação ainda não registrada'}</li>
-      <li>{ordem.fluxo.auto ? `Auto emitido para ${ordem.fluxo.auto.autuado_nome}` : 'Sem auto de infração (opcional)'}</li>
+      <li>{ordem.fluxo.auto ? `Auto emitido para ${ordem.fluxo.auto.autuado_nome}` : ordem.fluxo.decisao_auto?.decisao === 'nao_emitir' ? 'Fiscal decidiu não emitir auto de infração' : 'Auto de infração: decisão do fiscal'}</li>
       <li>{ordem.fluxo.embargo ? 'Embargo registrado' : 'Sem embargo (quando aplicável)'}</li>
       <li>{ordem.concluida_em ? `Concluída em ${dataHora(ordem.concluida_em)}` : 'Em andamento'}</li>
     </ol>
@@ -67,20 +79,36 @@ export function FluxoOrdemServico({ ordem, fiscal, onChange }: {
     <div className="os-acoes">
       <button className="outline-button" disabled={ocupado} onClick={() => void recarregar()}><RefreshCw size={16} /> Atualizar</button>
       <button className="outline-button" disabled={ocupado || !fiscal} onClick={() => void baixar(ordem)}><Download size={16} /> Baixar dossiê da OS</button>
-      {podeEditar && !etapa && !ocupado && <>
+      {podeEditar && !etapa && !semAuto && !ocupado && <>
         <button className="outline-button" onClick={() => setEtapa('editar')}>Editar OS / vincular denúncia</button>
         <button className="primary-button" onClick={() => setEtapa('notificacao')}>{ordem.fluxo.notificacao ? 'Corrigir notificação' : 'Registrar notificação'}</button>
-        <button className="outline-button" disabled={!ordem.fluxo.notificacao || !ordem.ocorrencia_id}
-          onClick={() => setEtapa('auto')}>{ordem.fluxo.auto ? 'Corrigir auto de infração' : 'Gerar auto de infração'}</button>
+        {ordem.fluxo.auto_id ? <button className="outline-button" onClick={() => setEtapa('auto')}>Corrigir auto de infração</button> :
+          <div className="os-decisao-auto" role="group" aria-label="Decisão sobre auto de infração">
+            <h3>Deseja emitir um auto de infração?</h3>
+            <p>Você decide. Nenhum auto é gerado automaticamente.</p>
+            {ordem.fluxo.decisao_auto?.decisao === 'nao_emitir' && <p>Decisão salva: não emitir. Justificativa: {ordem.fluxo.decisao_auto.justificativa}</p>}
+            <button className="primary-button" disabled={!ordem.fluxo.notificacao || !ordem.ocorrencia_id} onClick={() => void emitir()}>Emitir auto de infração</button>
+            <button className="outline-button" onClick={() => setSemAuto(true)}>Não emitir auto</button>
+            {!ordem.fluxo.notificacao && <p>Para emitir, registre primeiro a notificação.</p>}
+          </div>}
         {!ordem.ocorrencia_id && <p className="muted">Para emitir um auto, vincule uma denúncia registrada por você ou designada a você.</p>}
         <button className="outline-button" disabled={!ordem.fluxo.auto_id} onClick={() => setEtapa('embargo')}>
           {ordem.fluxo.embargo ? 'Corrigir embargo' : 'Registrar embargo (se aplicável)'}</button>
         <button className="primary-button" onClick={() => setEtapa('concluir')}>{ordem.concluida_em ? 'Corrigir conclusão' : 'Concluir OS — com ou sem auto'}</button>
       </>}
     </div>
+    {semAuto && <DecisaoSemAuto ordem={ordem} bloqueada={bloqueada} onCancel={() => setSemAuto(false)} onSave={(salva) => {
+      onChange(salva); setSemAuto(false); setMensagem('Decisão de não emitir registrada. A OS continua no mesmo estado; conclua quando terminar.');
+    }} />}
     {etapa && fiscal && <FormularioEtapa key={`${ordem.id}-${etapa}-${ordem.versao}`} ordem={ordem} fiscal={fiscal}
       etapa={etapa} bloqueada={bloqueada} onCancel={() => setEtapa(null)}
       onSave={(salva) => { onChange(salva); setEtapa(null); setMensagem('Etapa salva no sistema e registrada no histórico.'); }} />}
+    {ordem.fluxo.decisao_auto && <article className="form-card compact">
+      <b>Decisão registrada sobre o auto</b>
+      <p>{ordem.fluxo.auto_id ? 'Auto de infração emitido.' : ordem.fluxo.decisao_auto.decisao === 'nao_emitir' ? 'Não emitir auto de infração.' : 'Emitir auto — formulário ainda não confirmado.'}</p>
+      {ordem.fluxo.decisao_auto.justificativa && <p>{ordem.fluxo.decisao_auto.justificativa}</p>}
+      <span className="muted">Por {ordem.fluxo.decisao_auto.fiscal_nome} · {dataHora(String(ordem.fluxo.decisao_auto.registrado_em))}</span>
+    </article>}
     <h3>Documentos registrados</h3>
     {(['notificacao', 'auto', 'embargo', 'conclusao'] as const).map((chave) => {
       const doc = ordem.fluxo[chave];
@@ -211,5 +239,27 @@ function FormularioEtapa({ ordem, fiscal, etapa, bloqueada, onCancel, onSave }: 
       <button type="button" className="ghost-button" disabled={ocupado} onClick={onCancel}>Cancelar</button>
       <button className="primary-button" disabled={ocupado || bloqueada}>{ocupado ? 'Salvando...' : etapa === 'concluir' ? 'Confirmar conclusão' : 'Salvar etapa'}</button>
     </div>
+  </form>;
+}
+
+function DecisaoSemAuto({ ordem, bloqueada, onCancel, onSave }: {
+  ordem: OrdemComFluxo; bloqueada: boolean; onCancel: () => void; onSave: (os: OrdemComFluxo) => void;
+}) {
+  const [motivo, setMotivo] = useState(String(ordem.fluxo.decisao_auto?.justificativa ?? ''));
+  const [erro, setErro] = useState(''); const [ocupado, setOcupado] = useState(false); const trava = useRef(false);
+  async function salvar(e: FormEvent) {
+    e.preventDefault(); if (trava.current || bloqueada) return;
+    trava.current = true; setOcupado(true); setErro('');
+    try { onSave(await decidirAutoOS(ordem, false, motivo)); }
+    catch (falha) { setErro(falha instanceof Error ? falha.message : 'Não foi possível registrar.'); }
+    finally { trava.current = false; setOcupado(false); }
+  }
+  return <form className="form-card os-etapa-form" onSubmit={(e) => void salvar(e)}>
+    <h3>Não emitir auto de infração</h3><p>Registre o motivo. Isso não encerra a OS nem cria multa ou embargo.</p>
+    <label>Justificativa<textarea required minLength={10} maxLength={2000} value={motivo} disabled={ocupado || bloqueada} onChange={(e) => setMotivo(e.target.value)} /></label>
+    {erro && <p role="alert" className="form-message">{erro}</p>}
+    {bloqueada && <p role="alert">O prazo de edição terminou.</p>}
+    <div className="form-actions"><button type="button" className="ghost-button" disabled={ocupado} onClick={onCancel}>Cancelar</button>
+      <button className="primary-button" disabled={ocupado || bloqueada}>{ocupado ? 'Salvando...' : 'Confirmar: não emitir auto'}</button></div>
   </form>;
 }
