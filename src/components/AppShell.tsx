@@ -17,6 +17,7 @@ import {
 import { signOut } from '@/lib/authActions';
 import { Fiscal, Screen } from '@/lib/types';
 import { SifauSimbolo } from '@/components/Logo';
+import { AlternarTema } from '@/components/AlternarTema';
 import { SyncBanner } from '@/components/SyncBanner';
 
 // O painel administrativo é alcançado pela lista "Mais" (e pelo menu lateral),
@@ -63,10 +64,13 @@ export function AppShell({
             <span>Fiscalização urbana</span>
           </div>
         </div>
-        <button className="icon-button notification" aria-label="Notificações" onClick={() => change('notifications')}>
-          <Bell size={20} />
-          {unreadCount > 0 && <i />}
-        </button>
+        <div className="topbar-actions">
+          <AlternarTema />
+          <button className="icon-button notification" aria-label="Notificações" onClick={() => change('notifications')}>
+            <Bell size={20} />
+            {unreadCount > 0 && <i />}
+          </button>
+        </div>
       </header>
 
       <main className="main-content">

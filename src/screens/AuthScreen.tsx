@@ -1,3 +1,4 @@
+import { AlternarTema } from '@/components/AlternarTema';
 import { FormEvent, useState } from 'react';
 import { AlertTriangle, Loader2, MailCheck } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
@@ -105,6 +106,7 @@ export function AuthScreen() {
 
   return (
     <div className="auth-page">
+      <div className="auth-theme"><AlternarTema /></div>
       <div className="auth-brand">
         <SifauMarcaVertical largura={158} className="auth-marca" />
       </div>

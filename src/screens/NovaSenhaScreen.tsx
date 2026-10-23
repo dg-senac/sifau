@@ -1,3 +1,4 @@
+import { AlternarTema } from '@/components/AlternarTema';
 // ============================================================================
 // SIFAU — Definir nova senha (chegada pelo link do e-mail)
 // ============================================================================
@@ -94,6 +95,7 @@ export function NovaSenhaScreen({ problema, email, onConcluir }: NovaSenhaScreen
 
   return (
     <div className="auth-page">
+      <div className="auth-theme"><AlternarTema /></div>
       <div className="auth-brand">
         <SifauMarcaVertical largura={158} className="auth-marca" />
       </div>

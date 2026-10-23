@@ -8,9 +8,9 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
-import { OCCURRENCE_STATUSES } from '@/lib/types';
 import { OCCURRENCE_EXPORT_COLUMNS } from '@/lib/columns';
 import { PageTitle, SkeletonList } from '@/components/ui';
+import { PainelAtividade } from '@/components/PainelAtividade';
 import { ExportarRelatorio } from '@/components/ExportarRelatorio';
 import { baixarArquivo, carregarPaginas, gerarArquivoRelatorio, type FormatoRelatorio } from '@/lib/relatorios';
 import { COLUNAS_OCORRENCIAS } from '@/lib/modelosRelatorios';
@@ -30,18 +30,19 @@ type DashboardOccurrence = {
 export function Dashboard() {
   const [stats, setStats] = useState({ total: 0, resolved: 0, overdue: 0 });
   const [byCategory, setByCategory] = useState<{ categoria: string; count: number; pct: number }[]>([]);
-  const [byStatus, setByStatus] = useState<{ status: string; count: number }[]>([]);
   const [fiscalRanking, setFiscalRanking] = useState<{ nome: string; resolvidas: number; compliance: number }[]>([]);
   const [escalated, setEscalated] = useState<number>(0);
   const [occurrences, setOccurrences] = useState<DashboardOccurrence[]>([]);
   const [refreshKey, setRefreshKey] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [erroDetalhes, setErroDetalhes] = useState(false);
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
 
   useEffect(() => {
+    let cancelado = false;
     const fetchDashboardData = async () => {
-      setLoading(true);
+      setLoading(true); setErroDetalhes(false);
       try {
       const [total, resolved, overdue, occData] = await Promise.all([
         supabase.from('ocorrencias').select('id', { count: 'exact', head: true }),
@@ -62,6 +63,10 @@ export function Dashboard() {
           .gte('created_at', new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()),
       ]);
 
+      if (cancelado) return;
+      if (total.error || resolved.error || overdue.error || occData.error || total.count == null || resolved.count == null || overdue.count == null) {
+        throw new Error('Contagens de ocorrências indisponíveis.');
+      }
       setStats({
         total: total.count ?? 0,
         resolved: resolved.count ?? 0,
@@ -70,7 +75,8 @@ export function Dashboard() {
 
       setOccurrences((occData.data ?? []) as DashboardOccurrence[]);
 
-      const { data: categoryData } = await supabase.from('ocorrencias').select('categoria');
+      const categoryData = await carregarPaginas((inicio, fim) => supabase.from('ocorrencias').select('categoria').order('id').range(inicio, fim));
+      if (cancelado) return;
       const counts: Record<string, number> = {};
       (categoryData ?? []).forEach((row) => {
         counts[row.categoria] = (counts[row.categoria] ?? 0) + 1;
@@ -84,25 +90,16 @@ export function Dashboard() {
         })) as { categoria: string; count: number; pct: number }[],
       );
 
-      const { data: statusData } = await supabase.from('ocorrencias').select('status');
-      const statusCounts: Record<string, number> = {};
-      (statusData ?? []).forEach((row) => {
-        statusCounts[row.status] = (statusCounts[row.status] ?? 0) + 1;
-      });
-      setByStatus(
-        OCCURRENCE_STATUSES.map((status) => ({
-          status,
-          count: statusCounts[status] ?? 0,
-        })),
-      );
-
-      const { count: escalatedCount } = await supabase
+      const { count: escalatedCount, error: escalatedError } = await supabase
         .from('ocorrencias')
         .select('id', { count: 'exact', head: true })
         .eq('status', 'Escalonada');
-      setEscalated(escalatedCount ?? 0);
+      if (cancelado) return;
+      if (escalatedError || escalatedCount == null) throw new Error('Contagem de escalonadas indisponível.');
+      setEscalated(escalatedCount);
 
-      const { data: fiscalData } = await supabase.from('ocorrencias').select('fiscal_designado, status');
+      const fiscalData = await carregarPaginas((inicio, fim) => supabase.from('ocorrencias').select('fiscal_designado, status').order('id').range(inicio, fim));
+      if (cancelado) return;
       const byFiscal: Record<string, { resolvidas: number; total: number }> = {};
       (fiscalData ?? []).forEach((row) => {
         if (!row.fiscal_designado) return;
@@ -115,7 +112,9 @@ export function Dashboard() {
         setFiscalRanking([]);
         return;
       }
-      const { data: directory } = await supabase.rpc('get_fiscal_directory');
+      const { data: directory, error: directoryError } = await supabase.rpc('get_fiscal_directory');
+      if (cancelado) return;
+      if (directoryError) throw directoryError;
       const fiscais = ((directory ?? []) as { id: string; nome: string }[]).filter((fiscal) => ids.includes(fiscal.id));
       const ranking = fiscais.map((f) => ({
         nome: f.nome,
@@ -126,12 +125,16 @@ export function Dashboard() {
       }));
       ranking.sort((a, b) => b.resolvidas - a.resolvidas);
       setFiscalRanking(ranking);
+      } catch (erro) {
+        if (!cancelado) setErroDetalhes(true);
+        console.error('Não foi possível carregar os detalhes de ocorrências:', erro);
       } finally {
-        setLoading(false);
+        if (!cancelado) setLoading(false);
       }
     };
 
-    fetchDashboardData();
+    void fetchDashboardData();
+    return () => { cancelado = true; };
   }, [refreshKey]);
 
   useEffect(() => {
@@ -209,10 +212,9 @@ export function Dashboard() {
         mapInstanceRef.current = null;
       }
     };
-  }, [occurrences]);
+  }, [occurrences, loading, erroDetalhes]);
 
   const compliance = stats.total ? Math.round((stats.resolved / stats.total) * 100) : 0;
-  const maxStatus = Math.max(...byStatus.map((s) => s.count), 1);
 
   const exportarOcorrencias = async (formato: FormatoRelatorio | 'json') => {
     if (formato === 'json') return;
@@ -230,10 +232,18 @@ export function Dashboard() {
     return (
       <>
         <PageTitle eyebrow="Visão geral" title="Painel operacional" />
+        <PainelAtividade atualizacao={refreshKey} />
         <SkeletonList linhas={2} label="Carregando painel" />
       </>
     );
   }
+
+  if (erroDetalhes) return <>
+    <PageTitle eyebrow="Visão geral" title="Painel operacional" />
+    <PainelAtividade atualizacao={refreshKey} />
+    <p className="form-message" role="alert">Os detalhes de ocorrências não puderam ser carregados. Os gráficos acima são consultados separadamente.</p>
+    <button className="outline-button" onClick={() => setRefreshKey(v => v + 1)}>Tentar carregar detalhes novamente</button>
+  </>;
 
   return (
     <>
@@ -246,6 +256,7 @@ export function Dashboard() {
           </button>
         }
       />
+      <PainelAtividade atualizacao={refreshKey} />
       <div className="metrics-grid">
         <Metric icon={<Landmark size={18} />} label="Ocorrências" value={stats.total} tone="blue" />
         <Metric icon={<CheckCircle2 size={18} />} label="Resolvidas" value={stats.resolved} tone="green" />
@@ -254,20 +265,6 @@ export function Dashboard() {
       </div>
 
       <ExportarRelatorio titulo="Exportar ocorrências" escopo="Todas as ocorrências acessíveis à sua conta, não apenas os pontos no mapa dos últimos 30 dias." onExport={exportarOcorrencias} />
-      <section className="dashboard-card">
-        <div className="section-heading">
-          <h2>Andamento das ocorrências</h2>
-
-        </div>
-        <div className="bar-chart">
-          {byStatus.map((s) => (
-            <div key={s.status} style={{ height: `${Math.max((s.count / maxStatus) * 100, 8)}%` }}>
-              <span>{s.status} ({s.count})</span>
-            </div>
-          ))}
-        </div>
-      </section>
-
       <section className="dashboard-card">
         <div className="section-heading">
           <h2>Ocorrências por categoria</h2>
@@ -319,7 +316,7 @@ export function Dashboard() {
                 <span className="rank-pos">{i + 1}</span>
                 <div>
                   <b>{f.nome}</b>
-                  <span>{f.resolvidas} resolvidas · {f.compliance}% SLA</span>
+                  <span>{f.resolvidas} resolvidas · {f.compliance}% resolvidas</span>
                 </div>
               </div>
             ))}

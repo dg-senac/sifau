@@ -7,6 +7,10 @@ import { AvisoDeAtualizacao } from './components/AvisoDeAtualizacao';
 // folha de estilo for aplicada.
 import './fonts';
 import './index.css';
+import { inicializarTema } from './lib/tema';
+
+// Aplica a preferência antes da primeira renderização do React.
+inicializarTema();
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
