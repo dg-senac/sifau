@@ -58,7 +58,7 @@ export async function applyRepoSql(handle, relativePath) {
  *   - 'setup'      → aplica supabase/SETUP_COMPLETO.sql (projeto novo)
  *   - 'migrations' → aplica supabase/migrations/*.sql em ordem (projeto existente)
  */
-export async function createDatabase({ source = 'setup' } = {}) {
+export async function createDatabase({ source = 'setup', lastMigration } = {}) {
   const db = new PGlite();
   const stubbed = new Set();
 
@@ -70,7 +70,8 @@ export async function createDatabase({ source = 'setup' } = {}) {
   } else {
     const dir = join(REPO_ROOT, 'supabase/migrations');
     for (const name of readdirSync(dir).filter((f) => f.endsWith('.sql')).sort()) {
-      files.push(`supabase/migrations/${name}`);
+      // Apenas testes de upgrade usam um ponto de partida anterior.
+      if (!lastMigration || name <= lastMigration) files.push(`supabase/migrations/${name}`);
     }
   }
 

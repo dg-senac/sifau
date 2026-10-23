@@ -160,10 +160,10 @@ export function ProfileScreen({ fiscal, onUpdated }: { fiscal: Fiscal | null; on
               role="switch"
               aria-label="Avisar quando uma ocorrência for atribuída a mim"
               className={`toggle ${notifAtribuicao ? 'on' : ''}`}
-              onClick={() => setNotifAtribuicao((value) => !value)}
+              disabled title="Atribuição de trabalho desativada nesta fase"
               aria-checked={notifAtribuicao}
             ><i /></button>
-            <span>Avisar quando uma ocorrência for atribuída a mim</span>
+            <span>Avisos de atribuição (indisponíveis nesta fase; preferência preservada)</span>
           </div>
           <div className="toggle-row">
             <button

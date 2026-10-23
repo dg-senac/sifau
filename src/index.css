@@ -726,3 +726,7 @@ button.anexo-erro { cursor: pointer; color: var(--vermelho); }
 .activity-track { height: 10px; background: var(--rebaixado); border-radius: 5px; overflow: hidden; }
 .activity-track > div { height: 100%; background: var(--azul-medio); border-radius: inherit; }
 .activity-caption { font-size: 10px; color: var(--texto-tenue); line-height: 1.5; margin: 16px 0 0; }
+
+.admin-scope-banner { display: flex; gap: 10px; align-items: flex-start; padding: 12px; margin-bottom: 18px; border: 1px solid var(--borda-azul); border-radius: var(--raio-m); background: var(--azul-tenue); color: var(--texto-medio); font-size: 12px; line-height: 1.5; }
+.admin-scope-banner svg { flex-shrink: 0; color: var(--azul); margin-top: 2px; }
+.admin-scope-banner b { display: block; color: var(--texto-forte); }

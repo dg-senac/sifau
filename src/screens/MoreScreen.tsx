@@ -18,10 +18,10 @@ export function MoreScreen({
     // O painel vem primeiro para o administrador: é a tela que ele mais usa e
     // que não existe na barra de baixo.
     ...(isAdmin
-      ? [{ id: 'admin' as Screen, label: 'Painel Administrativo', desc: 'Aprovar fiscais e distribuir ocorrências', icon: ShieldCheck }]
+      ? [{ id: 'admin' as Screen, label: 'Painel Administrativo', desc: 'Aprovar contas e gerenciar os registros gerais', icon: ShieldCheck }]
       : []),
     { id: 'profile', label: 'Meu perfil', desc: 'Dados pessoais e notificações', icon: User },
-    { id: 'notifications', label: 'Notificações', desc: 'Atribuições, prazos e status', icon: Bell, badge: unreadCount },
+    { id: 'notifications', label: 'Notificações', desc: 'Avisos, prazos e status', icon: Bell, badge: unreadCount },
     { id: 'messages', label: 'Mensagens', desc: 'Conversa com a administração', icon: MessageSquare },
     { id: 'map', label: 'Mapa da cidade', desc: 'Ocorrências geolocalizadas', icon: Map },
     { id: 'audit', label: 'Auditoria', desc: 'Histórico imutável de ações', icon: FileCheck2 },

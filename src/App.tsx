@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { BarChart3, ClipboardList, FileText, Home as HomeIcon, Menu as MenuIcon } from 'lucide-react';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 import { Fiscal, Screen } from '@/lib/types';
@@ -39,7 +39,11 @@ type AccessState = 'idle' | 'checking' | 'allowed' | 'pending' | 'banned' | 'err
 
 function App() {
   const { session, loading, recuperacao, encerrarRecuperacao } = useSession();
+  const currentUserRef = useRef(session?.user.id);
+  currentUserRef.current = session?.user.id;
+  const [accessUserId, setAccessUserId] = useState<string | null>(null);
   const [screen, setScreen] = useState<Screen>('home');
+  const [profileError, setProfileError] = useState(false);
   const [fiscal, setFiscal] = useState<Fiscal | null>(null);
   const [unreadCount, setUnreadCount] = useState(0);
   const [isAdmin, setIsAdmin] = useState(false);
@@ -47,6 +51,10 @@ function App() {
 
   useEffect(() => {
     const userId = session?.user.id;
+    setAccessUserId(userId ?? null);
+    setScreen('home');
+    setUnreadCount(0);
+    setProfileError(false);
     if (!userId) {
       setAccessState('idle');
       setIsAdmin(false);
@@ -64,6 +72,12 @@ function App() {
       if (checkingAccess || cancelled) return;
       checkingAccess = true;
       try {
+        const { data: privacyReady, error: privacyError } = await supabase.rpc('account_isolation_ready');
+        if (cancelled) return;
+        if (privacyError || privacyReady !== true) {
+          if (!lastVerifiedAllowed || !isRecoverableSyncError(privacyError)) setAccessState('error');
+          return;
+        }
         const { data: adminResult, error: adminError } = await supabase.rpc('is_admin');
         if (cancelled) return;
         if (adminError) {
@@ -129,13 +143,16 @@ function App() {
       return;
     }
 
+    setProfileError(false);
     const { data, error } = await supabase
       .from('fiscais')
       .select('*')
       .eq('id', sessionUserId)
       .maybeSingle();
 
-    if (error) {
+    if (currentUserRef.current !== sessionUserId) return;
+    if (error || !data) {
+      setProfileError(true);
       console.error('Erro ao carregar fiscal:', error);
       return;
     }
@@ -157,10 +174,12 @@ function App() {
   }, [isAdmin]);
 
   useEffect(() => {
-    setQueueUser(session?.user.id ?? null);
-  }, [session?.user.id]);
+    setQueueUser(accessState === 'allowed' && accessUserId === sessionUserId ? sessionUserId ?? null : null);
+  }, [sessionUserId, accessState, accessUserId]);
 
-  useEffect(() => startAutoSync(), []);
+  useEffect(() => {
+    if (accessState === 'allowed' && accessUserId === sessionUserId) return startAutoSync();
+  }, [sessionUserId, accessState, accessUserId]);
 
   useEffect(() => {
     const fiscalId = fiscal?.id;
@@ -281,6 +300,7 @@ function App() {
   }
 
   if (!session) return <AuthScreen />;
+  if (accessUserId !== session.user.id) return <LoadingScreen message="Verificando sua conta" />;
   if (accessState === 'checking' || accessState === 'idle') return <LoadingScreen message="Verificando permissões" />;
   if (accessState === 'pending' || accessState === 'banned' || accessState === 'error') {
     const title = accessState === 'pending'
@@ -292,7 +312,7 @@ function App() {
       ? 'Seu cadastro foi recebido. Um administrador precisa ativar o perfil antes de você acessar os dados operacionais.'
       : accessState === 'banned'
         ? 'Sua conta está suspensa. Entre em contato com a administração do sistema.'
-        : 'Verifique se as migrations mais recentes do Supabase foram aplicadas e tente novamente.';
+        : 'Verifique a conexão e se a atualização de privacidade SQL_EDITOR_ISOLAR_CONTAS.txt foi aplicada. O acesso fica bloqueado até a verificação para não expor dados de outra conta.';
 
     return (
       <div className="auth-page">
@@ -305,6 +325,13 @@ function App() {
     );
   }
 
+  if (profileError) return <div className="auth-page"><div className="auth-card">
+    <h1>Não foi possível carregar seu perfil</h1><p className="muted">Confira a conexão e tente novamente. Nenhum dado de outra conta será exibido.</p>
+    <button className="primary-button full" onClick={() => void loadFiscal()}>Tentar novamente</button>
+    <button className="ghost-button full" onClick={() => void signOut()}>Encerrar sessão</button>
+  </div></div>;
+  if (!fiscal || fiscal.id !== session.user.id) return <LoadingScreen message="Carregando seu perfil" />;
+
   const renderScreen = () => {
     switch (screen) {
       case 'new':
@@ -314,7 +341,7 @@ function App() {
       case 'dashboard':
         return <Dashboard />;
       case 'orders':
-        return <Orders fiscal={fiscal} />;
+        return <Orders fiscal={fiscal} isAdmin={isAdmin} />;
       case 'audit':
         return <Audit />;
       case 'users':
@@ -340,6 +367,7 @@ function App() {
 
   return (
     <AppShell
+      key={session.user.id}
       fiscal={fiscal}
       screen={screen}
       onScreen={setScreen}

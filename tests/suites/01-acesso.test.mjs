@@ -145,14 +145,11 @@ export default {
     });
 
     await t.test('fiscal só enxerga as próprias notificações', async () => {
-      // Atribui a ocorrência ao fiscal ativo, gerando notificação para ele.
-      await db.as(IDS.admin, 'authenticated', async () => {
-        await db.query(`SELECT public.assign_occurrence($1, $2)`, [occurrenceId, IDS.active]);
-      });
+      await db.owner("INSERT INTO public.notificacoes(fiscal_id,ocorrencia_id,titulo,mensagem) VALUES ($1,$2,'Teste','Aviso privado')", [IDS.active, occurrenceId]);
 
       const own = await db.as(IDS.active, 'authenticated', async () =>
         Number((await db.query(`SELECT count(*) AS n FROM public.notificacoes`)).rows[0].n));
-      t.ok(own >= 1, 'fiscal ativo recebeu a notificação de atribuição');
+      t.ok(own >= 1, 'fiscal ativo recebeu a própria notificação');
 
       const other = await db.as(IDS.other, 'authenticated', async () =>
         Number((await db.query(`SELECT count(*) AS n FROM public.notificacoes`)).rows[0].n));

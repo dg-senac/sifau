@@ -109,106 +109,16 @@ export default {
       t.eq(rows[0].ativo, false, 'alvo permanece inativo');
     });
 
-    await t.test('administrador distribui uma ocorrência sem responsável', async () => {
-      const occurrenceId = await createOccurrence(db, IDS.active);
-      const before = await db.owner(`SELECT fiscal_designado FROM public.ocorrencias WHERE id = $1`, [occurrenceId]);
-      t.eq(before.rows[0].fiscal_designado, null, 'responsável antes da distribuição');
-
-      await db.as(IDS.admin, 'authenticated', async () => {
-        await db.query(`SELECT public.assign_occurrence($1, $2)`, [occurrenceId, IDS.pending]);
-      });
-
-      const after = await db.owner(
-        `SELECT fiscal_designado, status FROM public.ocorrencias WHERE id = $1`, [occurrenceId]);
-      t.eq(after.rows[0].fiscal_designado, IDS.pending, 'responsável depois da distribuição');
-      t.eq(after.rows[0].status, 'Atribuída', 'status depois da distribuição');
-    });
-
-    await t.test('administrador não distribui para fiscal inativo', async () => {
-      const occurrenceId = await createOccurrence(db, IDS.active);
-      await db.as(IDS.admin, 'authenticated', async () => {
-        await t.denies(
-          () => db.query(`SELECT public.assign_occurrence($1, $2)`, [occurrenceId, IDS.other]),
-          'distribuição para fiscal inativo',
-        );
-      });
-    });
-
-    await t.test('administrador não redistribui ocorrência já atribuída sem usar a redistribuição', async () => {
-      const occurrenceId = await createOccurrence(db, IDS.active);
-      await db.as(IDS.admin, 'authenticated', async () => {
-        await db.query(`SELECT public.assign_occurrence($1, $2)`, [occurrenceId, IDS.active]);
-        await t.denies(
-          () => db.query(`SELECT public.assign_occurrence($1, $2)`, [occurrenceId, IDS.pending]),
-          'segunda distribuição pela rota normal',
-        );
-      });
-    });
-
-    // `redistribute_occurrence` NÃO é uma operação administrativa: o app a chama
-    // em `Inspection.tsx` para o próprio fiscal repassar a ocorrência dele a um
-    // colega. O contrato exige que quem chama seja o designado atual.
-    await t.test('fiscal designado repassa a própria ocorrência a um colega', async () => {
-      await db.as(IDS.admin, 'authenticated', async () => {
-        await db.query(`SELECT public.set_fiscal_active($1, true)`, [IDS.other]);
-      });
-
-      const occurrenceId = await createOccurrence(db, IDS.active);
-      await db.as(IDS.admin, 'authenticated', async () => {
-        await db.query(`SELECT public.assign_occurrence($1, $2)`, [occurrenceId, IDS.active]);
-      });
-
-      await db.as(IDS.active, 'authenticated', async () => {
-        await db.query(`SELECT public.redistribute_occurrence($1, $2)`, [occurrenceId, IDS.other]);
-      });
-
-      const { rows } = await db.owner(
-        `SELECT fiscal_designado FROM public.ocorrencias WHERE id = $1`, [occurrenceId]);
-      t.eq(rows[0].fiscal_designado, IDS.other, 'novo responsável após redistribuição');
-    });
-
-    await t.test('fiscal que não é o designado não redistribui a ocorrência alheia', async () => {
-      const occurrenceId = await createOccurrence(db, IDS.active);
-      await db.as(IDS.admin, 'authenticated', async () => {
-        await db.query(`SELECT public.assign_occurrence($1, $2)`, [occurrenceId, IDS.active]);
-      });
-
-      await db.as(IDS.other, 'authenticated', async () => {
-        await t.denies(
-          () => db.query(`SELECT public.redistribute_occurrence($1, $2)`, [occurrenceId, IDS.other]),
-          'redistribuição por quem não é o designado',
-        );
-      });
-
-      const { rows } = await db.owner(
-        `SELECT fiscal_designado FROM public.ocorrencias WHERE id = $1`, [occurrenceId]);
-      t.eq(rows[0].fiscal_designado, IDS.active, 'responsável preservado');
-    });
-
-    await t.test('redistribuição não permite escolher a si mesmo', async () => {
-      const occurrenceId = await createOccurrence(db, IDS.active);
-      await db.as(IDS.admin, 'authenticated', async () => {
-        await db.query(`SELECT public.assign_occurrence($1, $2)`, [occurrenceId, IDS.active]);
-      });
-      await db.as(IDS.active, 'authenticated', async () => {
-        await t.denies(
-          () => db.query(`SELECT public.redistribute_occurrence($1, $2)`, [occurrenceId, IDS.active]),
-          'redistribuição para o próprio fiscal',
-        );
-      });
-    });
-
-    await t.test('administrador não redistribui por esta rota (é operação do fiscal)', async () => {
-      // Registra o contrato atual para que uma mudança acidental apareça.
-      // Se o painel algum dia precisar redistribuir, é preciso um RPC próprio.
-      const occurrenceId = await createOccurrence(db, IDS.active);
-      await db.as(IDS.admin, 'authenticated', async () => {
-        await db.query(`SELECT public.assign_occurrence($1, $2)`, [occurrenceId, IDS.active]);
-        await t.denies(
-          () => db.query(`SELECT public.redistribute_occurrence($1, $2)`, [occurrenceId, IDS.pending]),
-          'redistribuição pelo administrador',
-        );
-      });
+    await t.test('atribuição e redistribuição desativadas inclusive para administradores', async () => {
+      const id = await createOccurrence(db, IDS.active);
+      for (const ator of [IDS.admin, IDS.active, IDS.pending, IDS.other]) {
+        await db.as(ator, 'authenticated', async () => {
+          await t.denies(() => db.query('SELECT public.assign_occurrence($1,$2)', [id, IDS.other]));
+          await t.denies(() => db.query('SELECT public.redistribute_occurrence($1,$2)', [id, IDS.other]));
+        });
+      }
+      const { rows } = await db.owner('SELECT fiscal_registrou,fiscal_designado,status FROM public.ocorrencias WHERE id=$1',[id]);
+      t.eq(rows[0], { fiscal_registrou: IDS.active, fiscal_designado: null, status: 'Aberta' });
     });
 
     await t.test('diretório de fiscais não expõe dados sensíveis', async () => {
