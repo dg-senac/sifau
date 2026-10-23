@@ -26,7 +26,7 @@ const ERROS_GPS_OS: Record<MotivoDeFalha, string> = {
   inesperada: 'Não foi possível obter a localização. Tente novamente.',
 };
 
-export function Orders({ fiscal }: { fiscal: Fiscal | null }) {
+export function Orders({ fiscal, isAdmin = false }: { fiscal: Fiscal | null; isAdmin?: boolean }) {
   const [orders, setOrders] = useState<OrdemComFluxo[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
@@ -55,7 +55,7 @@ export function Orders({ fiscal }: { fiscal: Fiscal | null }) {
   }, [load]);
 
   if (detail) {
-    return <OrderDetail order={detail} fiscal={fiscal} onClose={() => { setDetail(null); load(); }} />;
+    return <OrderDetail order={detail} fiscal={fiscal} isAdmin={isAdmin} onClose={() => { setDetail(null); load(); }} />;
   }
 
   return (
@@ -271,7 +271,7 @@ function OrderForm({
   );
 }
 
-function OrderDetail({ order: initialOrder, fiscal, onClose }: { order: OrdemComFluxo; fiscal: Fiscal | null; onClose: () => void }) {
+function OrderDetail({ order: initialOrder, fiscal, onClose, isAdmin = false }: { order: OrdemComFluxo; fiscal: Fiscal | null; isAdmin?: boolean; onClose: () => void }) {
   const [order, setOrder] = useState(initialOrder);
   const [vistorias, setVistorias] = useState<Vistoria[]>([]);
   const [withinRange, setWithinRange] = useState(false);
@@ -350,7 +350,7 @@ function OrderDetail({ order: initialOrder, fiscal, onClose }: { order: OrdemCom
         </div>
       </div>
 
-      {order.status === 'Aberta' && fiscal && (order.fiscal_abertura === fiscal.id || order.fiscal_designado === fiscal.id) && (
+      {order.status === 'Aberta' && fiscal && (isAdmin || order.fiscal_abertura === fiscal.id) && (
         <div className="proximity-card">
           <div className="proximity-icon"><Navigation size={20} /></div>
           <div>
@@ -360,7 +360,7 @@ function OrderDetail({ order: initialOrder, fiscal, onClose }: { order: OrdemCom
         </div>
       )}
 
-      {order.status === 'Aberta' && fiscal && (order.fiscal_abertura === fiscal.id || order.fiscal_designado === fiscal.id) && (
+      {order.status === 'Aberta' && fiscal && (isAdmin || order.fiscal_abertura === fiscal.id) && (
         <>
           <button className="outline-button full" onClick={checkProximity} disabled={checking}>
             <Navigation size={16} />
@@ -393,7 +393,7 @@ function OrderDetail({ order: initialOrder, fiscal, onClose }: { order: OrdemCom
         </div>
       )}
 
-      <FluxoOrdemServico ordem={order} fiscal={fiscal} onChange={setOrder} />
+      <FluxoOrdemServico ordem={order} fiscal={fiscal} isAdmin={isAdmin} onChange={setOrder} />
 
     </>
   );

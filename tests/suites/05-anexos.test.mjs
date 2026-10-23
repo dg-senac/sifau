@@ -175,17 +175,14 @@ export default {
       });
     });
 
-    await t.test('fiscal designado enxerga o anexo da ocorrência que vai vistoriar', async () => {
+    await t.test('designação legada não concede leitura do anexo de outra conta', async () => {
       // O desenho abre a leitura para o fiscal vinculado ao alvo: ele precisa
       // ver a foto "antes" do problema que vai vistoriar.
-      await db.as(IDS.admin, 'authenticated', async () => {
-        await db.query(`SELECT public.assign_occurrence($1, $2)`, [ocorrenciaA, IDS.other]);
-      });
+      await db.owner('UPDATE public.ocorrencias SET fiscal_designado=$1 WHERE id=$2',[IDS.other,ocorrenciaA]);
 
       const { rows } = await db.as(IDS.other, 'authenticated', async () =>
         db.query(`SELECT * FROM public.anexos`));
-      t.count(rows.length, 1, 'anexos visíveis ao fiscal designado');
-      t.eq(rows[0]?.id, anexoA, 'é o anexo da ocorrência atribuída a ele');
+      t.count(rows.length, 0, 'anexo alheio continua privado mesmo com designação legada');
     });
 
     await t.test('o vínculo é específico: ver um alvo não abre os outros', async () => {
@@ -201,7 +198,7 @@ export default {
 
       const visiveis = await db.as(IDS.other, 'authenticated', async () =>
         (await db.query(`SELECT id FROM public.anexos`)).rows.map((r) => r.id));
-      t.eq(visiveis, [anexoA], 'anexos visíveis ao fiscal designado');
+      t.eq(visiveis, [], 'nenhum anexo alheio visível');
     });
 
     await t.test('o arquivo é imutável: o caminho não muda por UPDATE', async () => {
@@ -247,9 +244,6 @@ export default {
       // O caminho da vistoria: uma ocorrência atribuída ao próprio fiscal,
       // status em vistoria, e o anexo vinculado à vistoria.
       const ocorrenciaC = await createOccurrence(db, IDS.active);
-      await db.as(IDS.admin, 'authenticated', async () => {
-        await db.query(`SELECT public.assign_occurrence($1, $2)`, [ocorrenciaC, IDS.active]);
-      });
       const vistoria = await db.as(IDS.active, 'authenticated', async () =>
         db.query(
           `INSERT INTO public.vistorias

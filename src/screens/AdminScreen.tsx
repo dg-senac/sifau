@@ -89,17 +89,6 @@ type BanRow = {
   expires_at: string | null;
 };
 
-type UnassignedOccurrence = {
-  id: string;
-  categoria: string;
-  descricao: string;
-  bairro: string;
-  endereco: string;
-  urgencia: string;
-  status: string;
-  created_at: string;
-};
-
 export function AdminScreen() {
   const [fiscais, setFiscais] = useState<FiscalWithStatus[]>([]);
   const [filteredFiscais, setFilteredFiscais] = useState<FiscalWithStatus[]>([]);
@@ -128,9 +117,6 @@ export function AdminScreen() {
     total_occurrences: 0,
     resolved_today: 0,
   });
-  const [unassignedOccurrences, setUnassignedOccurrences] = useState<UnassignedOccurrence[]>([]);
-  const [assignmentTargets, setAssignmentTargets] = useState<Record<string, string>>({});
-  const [assigningOccurrenceId, setAssigningOccurrenceId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [authorized, setAuthorized] = useState(false);
@@ -145,22 +131,16 @@ export function AdminScreen() {
     try {
       const startOfDay = new Date();
       startOfDay.setHours(0, 0, 0, 0);
-      const [fiscaisResult, locationsResult, bannedResult, occurrencesResult, resolvedResult, unassignedResult] = await Promise.all([
+      const [fiscaisResult, locationsResult, bannedResult, occurrencesResult, resolvedResult] = await Promise.all([
         supabase.from('fiscais').select('*'),
         supabase.from('fiscal_location').select('*').order('last_seen', { ascending: false }),
         supabase.from('banned_users').select('id, ban_type, expires_at'),
         supabase.from('ocorrencias').select('fiscal_registrou, status'),
         supabase.from('auditoria').select('id', { count: 'exact', head: true })
           .eq('status_novo', 'Resolvida').gte('created_at', startOfDay.toISOString()),
-        supabase.from('ocorrencias')
-          .select('id, categoria, descricao, bairro, endereco, urgencia, status, created_at')
-          .is('fiscal_designado', null)
-          .in('status', ['Aberta', 'Triada', 'Escalonada'])
-          .order('created_at', { ascending: true })
-          .limit(100),
       ]);
 
-      const failure = [fiscaisResult.error, locationsResult.error, bannedResult.error, occurrencesResult.error, resolvedResult.error, unassignedResult.error]
+      const failure = [fiscaisResult.error, locationsResult.error, bannedResult.error, occurrencesResult.error, resolvedResult.error]
         .find((error) => error !== null);
       if (failure) throw failure;
 
@@ -168,7 +148,6 @@ export function AdminScreen() {
       const locations = (locationsResult.data ?? []) as LocationRow[];
       const banned = (bannedResult.data ?? []) as BanRow[];
       const occurrences = (occurrencesResult.data ?? []) as OccurrenceStatsRow[];
-      setUnassignedOccurrences((unassignedResult.data ?? []) as UnassignedOccurrence[]);
       const activeBanIds = new Set(banned
         .filter((ban) => ban.ban_type === 'permanent' || Boolean(ban.expires_at && new Date(ban.expires_at).getTime() > Date.now()))
         .map((ban) => ban.id));
@@ -514,7 +493,6 @@ export function AdminScreen() {
     await loadData();
   };
 
-  const eligibleFiscals = fiscais.filter((fiscal) => fiscal.ativo && !fiscal.is_banned);
 
   const setFiscalActive = async (fiscal: FiscalWithStatus, active: boolean) => {
     setActionMessage('');
@@ -528,28 +506,6 @@ export function AdminScreen() {
       return;
     }
     await loadData();
-  };
-
-  const assignOccurrence = async (occurrenceId: string) => {
-    const targetId = assignmentTargets[occurrenceId] || eligibleFiscals[0]?.id;
-    if (!targetId) {
-      setActionMessage('Não há fiscais ativos e sem banimento para receber esta ocorrência.');
-      return;
-    }
-    setAssigningOccurrenceId(occurrenceId);
-    setActionMessage('');
-    const { error } = await supabase.rpc('assign_occurrence', {
-      p_occurrence_id: occurrenceId,
-      p_target_fiscal_id: targetId,
-    });
-    if (error) {
-      console.error('Erro ao distribuir ocorrência:', error);
-      setActionMessage('Não foi possível atribuir a ocorrência. Atualize a lista e tente novamente.');
-    } else {
-      setActionMessage('Ocorrência atribuída com sucesso.');
-      await loadData();
-    }
-    setAssigningOccurrenceId(null);
   };
 
   const handleRefresh = async () => {
@@ -671,50 +627,7 @@ export function AdminScreen() {
         </div>
       </div>
 
-      <section className="admin-triage" aria-labelledby="admin-triage-heading">
-        <div className="admin-triage-heading">
-          <div>
-            <span className="eyebrow">Distribuição</span>
-            <h2 id="admin-triage-heading">Ocorrências sem fiscal designado</h2>
-          </div>
-          <span className="count-chip">{unassignedOccurrences.length} pendentes</span>
-        </div>
-        {unassignedOccurrences.length === 0 ? (
-          <p className="admin-triage-empty">Não há ocorrências aguardando distribuição.</p>
-        ) : eligibleFiscals.length === 0 ? (
-          <p className="admin-triage-empty">Ative pelo menos um fiscal não banido para distribuir os casos.</p>
-        ) : (
-          <div className="admin-triage-list">
-            {unassignedOccurrences.map((occurrence) => (
-              <article className="admin-triage-card" key={occurrence.id}>
-                <div className="admin-triage-details">
-                  <b>{occurrence.categoria} <span className="urgency">{occurrence.urgencia}</span></b>
-                  <span>{occurrence.endereco} · {occurrence.bairro} · {occurrence.status}</span>
-                  <p>{occurrence.descricao}</p>
-                </div>
-                <div className="admin-triage-actions">
-                  <select
-                    aria-label={`Fiscal para ${occurrence.categoria} em ${occurrence.bairro}`}
-                    value={assignmentTargets[occurrence.id] || eligibleFiscals[0]?.id || ''}
-                    onChange={(event) => setAssignmentTargets((current) => ({ ...current, [occurrence.id]: event.target.value }))}
-                  >
-                    {eligibleFiscals.map((fiscal) => (
-                      <option key={fiscal.id} value={fiscal.id}>{fiscal.nome} · {fiscal.bairro}</option>
-                    ))}
-                  </select>
-                  <button
-                    className="primary-button small"
-                    disabled={assigningOccurrenceId === occurrence.id}
-                    onClick={() => { void assignOccurrence(occurrence.id); }}
-                  >
-                    {assigningOccurrenceId === occurrence.id ? 'Atribuindo…' : 'Atribuir'}
-                  </button>
-                </div>
-              </article>
-            ))}
-          </div>
-        )}
-      </section>
+      <div className="info-message" role="note">Área administrativa: gestão geral e aprovação de contas. A distribuição de trabalho está desativada; cada usuário cuida dos próprios registros.</div>
 
       {/* Filters */}
       <div className="admin-filters">

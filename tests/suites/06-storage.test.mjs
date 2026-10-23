@@ -151,9 +151,6 @@ export default {
     await t.test('o gatilho recusa foto embutida (base64) na vistoria', async () => {
       // A vistoria entra pela coluna direta: o RPC também passa pelo gatilho.
       const ocorrencia = await createOccurrence(db, IDS.active);
-      await db.as(IDS.admin, 'authenticated', async () => {
-        await db.query(`SELECT public.assign_occurrence($1, $2)`, [ocorrencia, IDS.active]);
-      });
 
       await db.as(IDS.active, 'authenticated', async () => {
         await t.denies(
@@ -173,9 +170,6 @@ export default {
 
     await t.test('vistoria concluída pelo RPC grava caminhos', async () => {
       const ocorrencia = await createOccurrence(db, IDS.active);
-      await db.as(IDS.admin, 'authenticated', async () => {
-        await db.query(`SELECT public.assign_occurrence($1, $2)`, [ocorrencia, IDS.active]);
-      });
 
       const vistoriaId = '77777777-7777-4777-8777-777777777777';
       const caminho = `${IDS.active}/2026/10/depois-da-vistoria.jpg`;
@@ -201,9 +195,6 @@ export default {
       // A assinatura do autuado era o último arquivo que ainda entrava na linha
       // por um caminho diferente das fotos: é imagem gerada na tela, não upload.
       const ocorrencia = await createOccurrence(db, IDS.active);
-      await db.as(IDS.admin, 'authenticated', async () => {
-        await db.query(`SELECT public.assign_occurrence($1, $2)`, [ocorrencia, IDS.active]);
-      });
 
       const autoId = '88888888-8888-4888-8888-888888888888';
       const caminho = `${IDS.active}/2026/10/assinatura-do-autuado.png`;

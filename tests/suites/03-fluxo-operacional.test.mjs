@@ -2,7 +2,7 @@
 // Suíte 3 — Fluxo operacional de fiscalização
 // ============================================================================
 // Percorre o caminho real do app, de ponta a ponta:
-//   registrar ocorrência → triagem → distribuição → vistoria → conclusão
+//   registrar ocorrência própria → triagem → vistoria → conclusão
 // e confere que a trilha de auditoria registra cada transição.
 //
 // Esta suíte protege a LÓGICA do sistema: se um dia um ajuste de schema
@@ -25,7 +25,7 @@ export default {
       t.ok(occurrenceId, 'id da ocorrência');
     });
 
-    await t.test('ocorrência nasce "Aberta" e sem responsável (entra na triagem)', async () => {
+    await t.test('ocorrência nasce "Aberta" e sem atribuição, pronta para vistoria da própria conta', async () => {
       const { rows } = await db.owner(
         `SELECT status, fiscal_designado, sla_deadline FROM public.ocorrencias WHERE id = $1`, [occurrenceId]);
       t.eq(rows[0].status, 'Aberta', 'status inicial');
@@ -69,21 +69,10 @@ export default {
       t.ok(Number(rows[0].n) >= 1, 'registros de auditoria da ocorrência');
     });
 
-    await t.test('administrador distribui a ocorrência na triagem', async () => {
-      await db.as(IDS.admin, 'authenticated', async () => {
-        await db.query(`SELECT public.assign_occurrence($1, $2)`, [occurrenceId, IDS.active]);
-      });
-      const { rows } = await db.owner(
-        `SELECT status, fiscal_designado FROM public.ocorrencias WHERE id = $1`, [occurrenceId]);
-      t.eq(rows[0].status, 'Atribuída', 'status após distribuição');
-      t.eq(rows[0].fiscal_designado, IDS.active, 'responsável após distribuição');
-    });
-
-    await t.test('distribuição notifica o fiscal responsável', async () => {
-      const { rows } = await db.owner(
-        `SELECT tipo, lida FROM public.notificacoes WHERE fiscal_id = $1`, [IDS.active]);
-      t.ok(rows.length >= 1, 'notificações do fiscal');
-      t.ok(rows.some((r) => r.tipo === 'atribuicao'), 'notificação de atribuição');
+    await t.test('fiscal prepara a própria ocorrência sem distribuição', async () => {
+      await db.as(IDS.active, 'authenticated', () => db.query("SELECT public.update_occurrence_status($1,'Triada','Preparação pelo próprio fiscal')",[occurrenceId]));
+      const { rows } = await db.owner('SELECT status,fiscal_designado FROM public.ocorrencias WHERE id=$1',[occurrenceId]);
+      t.eq(rows[0], { status: 'Triada', fiscal_designado: null });
     });
 
     await t.test('fiscal conclui a vistoria pelo RPC do app', async () => {
@@ -117,15 +106,12 @@ export default {
         `SELECT status_anterior, status_novo FROM public.auditoria
          WHERE ocorrencia_id = $1 ORDER BY created_at`, [occurrenceId]);
       const transitions = rows.map((r) => `${r.status_anterior ?? '∅'}→${r.status_novo}`);
-      t.ok(transitions.some((s) => s.endsWith('→Atribuída')), `transição para Atribuída (${transitions.join(', ')})`);
+      t.ok(transitions.some((s) => s.endsWith('→Triada')), `transição para Triada (${transitions.join(', ')})`);
       t.ok(transitions.some((s) => s.endsWith('→Resolvida')), `transição para Resolvida (${transitions.join(', ')})`);
     });
 
     await t.test('fiscal não conclui vistoria de ocorrência que não é dele', async () => {
       const outra = await createOccurrence(db, IDS.active);
-      await db.as(IDS.admin, 'authenticated', async () => {
-        await db.query(`SELECT public.assign_occurrence($1, $2)`, [outra, IDS.active]);
-      });
 
       // O fiscal "other" tenta concluir a vistoria de uma ocorrência do colega.
       const payload = occurrencePayload(IDS.other);
@@ -148,9 +134,6 @@ export default {
 
     await t.test('vistoria com ação "Multa" exige valor e número de processo', async () => {
       const alvo = await createOccurrence(db, IDS.active);
-      await db.as(IDS.admin, 'authenticated', async () => {
-        await db.query(`SELECT public.assign_occurrence($1, $2)`, [alvo, IDS.active]);
-      });
       await db.as(IDS.active, 'authenticated', async () => {
         await t.denies(
           () => db.query(
@@ -169,9 +152,6 @@ export default {
 
     await t.test('vistoria sem foto é rejeitada pelo banco', async () => {
       const alvo = await createOccurrence(db, IDS.active);
-      await db.as(IDS.admin, 'authenticated', async () => {
-        await db.query(`SELECT public.assign_occurrence($1, $2)`, [alvo, IDS.active]);
-      });
       await db.as(IDS.active, 'authenticated', async () => {
         await t.denies(
           () => db.query(

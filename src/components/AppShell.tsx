@@ -61,7 +61,7 @@ export function AppShell({
           </div>
           <div>
             <strong>SIFAU</strong>
-            <span>Fiscalização urbana</span>
+            <span>{isAdmin ? 'Administração · visão geral' : 'Área pessoal · seus registros'}</span>
           </div>
         </div>
         <div className="topbar-actions">
@@ -74,6 +74,7 @@ export function AppShell({
       </header>
 
       <main className="main-content">
+        {isAdmin && <div className="admin-scope-banner" role="note"><ShieldCheck size={18} aria-hidden="true" /><span><b>Modo administrador</b>Você pode consultar registros gerais. As contas comuns acessam somente seus próprios dados.</span></div>}
         <SyncBanner />
         {children}
       </main>

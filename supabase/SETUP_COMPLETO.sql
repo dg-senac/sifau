@@ -2989,3 +2989,546 @@ BEGIN
 END;
 $$;
 COMMIT;
+
+
+-- Isolamento por conta. NÃO exclui, transfere ou reescreve registros existentes.
+-- Atribuição/redistribuição desativadas nesta fase. Administradores mantêm gestão global.
+BEGIN;
+DO $$
+BEGIN
+  IF to_regclass('public.os_historico') IS NULL
+     OR to_regprocedure('public.decidir_auto_os(uuid,integer,boolean,text)') IS NULL THEN
+    RAISE EXCEPTION 'Atualização de privacidade exige o esquema de tramitação de OS já instalado. Pare e confira as migrations anteriores; nenhuma alteração foi aplicada.';
+  END IF;
+END;
+$$;
+
+-- Restrições adicionais (AND), resistentes a políticas permissivas legadas.
+DROP POLICY IF EXISTS conta_ocorrencias ON public.ocorrencias;
+CREATE POLICY conta_ocorrencias ON public.ocorrencias AS RESTRICTIVE FOR ALL TO authenticated
+USING (public.is_admin() OR (public.is_active_fiscal() AND fiscal_registrou = auth.uid()))
+WITH CHECK (public.is_admin() OR (public.is_active_fiscal() AND fiscal_registrou = auth.uid()));
+DROP POLICY IF EXISTS conta_os ON public.ordens_servico;
+CREATE POLICY conta_os ON public.ordens_servico AS RESTRICTIVE FOR ALL TO authenticated
+USING (public.is_admin() OR (public.is_active_fiscal() AND fiscal_abertura = auth.uid()))
+WITH CHECK (public.is_admin() OR (public.is_active_fiscal() AND fiscal_abertura = auth.uid()));
+DROP POLICY IF EXISTS conta_vistorias ON public.vistorias;
+CREATE POLICY conta_vistorias ON public.vistorias AS RESTRICTIVE FOR ALL TO authenticated
+USING (public.is_admin() OR (public.is_active_fiscal() AND fiscal_id = auth.uid()))
+WITH CHECK (public.is_admin() OR (public.is_active_fiscal() AND fiscal_id = auth.uid()
+ AND EXISTS (SELECT 1 FROM public.ocorrencias o WHERE o.id = ocorrencia_id AND o.fiscal_registrou = auth.uid())));
+DROP POLICY IF EXISTS inspections_insert_assigned ON public.vistorias;
+CREATE POLICY inspections_insert_assigned ON public.vistorias FOR INSERT TO authenticated
+WITH CHECK (public.is_admin() OR (public.is_active_fiscal() AND fiscal_id = auth.uid()
+ AND EXISTS (SELECT 1 FROM public.ocorrencias o WHERE o.id = ocorrencia_id
+ AND o.fiscal_registrou = auth.uid() AND o.status NOT IN ('Resolvida', 'Arquivada'))));
+
+DROP POLICY IF EXISTS conta_autos ON public.autos_infracao;
+CREATE POLICY conta_autos ON public.autos_infracao AS RESTRICTIVE FOR ALL TO authenticated
+USING (public.is_admin() OR (public.is_active_fiscal() AND (
+ (os_id IS NOT NULL AND EXISTS (SELECT 1 FROM public.ordens_servico o WHERE o.id = os_id AND o.fiscal_abertura = auth.uid()))
+ OR (os_id IS NULL AND EXISTS (SELECT 1 FROM public.ocorrencias o WHERE o.id = ocorrencia_id AND o.fiscal_registrou = auth.uid())))))
+WITH CHECK (public.is_admin() OR (public.is_active_fiscal() AND (
+ (os_id IS NOT NULL AND EXISTS (SELECT 1 FROM public.ordens_servico o WHERE o.id = os_id AND o.fiscal_abertura = auth.uid()))
+ OR (os_id IS NULL AND EXISTS (SELECT 1 FROM public.ocorrencias o WHERE o.id = ocorrencia_id AND o.fiscal_registrou = auth.uid())))));
+DROP POLICY IF EXISTS fines_insert_related ON public.autos_infracao;
+CREATE POLICY fines_insert_related ON public.autos_infracao FOR INSERT TO authenticated
+WITH CHECK (public.is_admin() OR (public.is_active_fiscal() AND os_id IS NULL
+ AND EXISTS (SELECT 1 FROM public.ocorrencias o WHERE o.id = ocorrencia_id AND o.fiscal_registrou = auth.uid())));
+
+DROP POLICY IF EXISTS conta_auditoria ON public.auditoria;
+CREATE POLICY conta_auditoria ON public.auditoria AS RESTRICTIVE FOR SELECT TO authenticated
+USING (public.is_admin() OR (public.is_active_fiscal() AND EXISTS (
+ SELECT 1 FROM public.ocorrencias o WHERE o.id = ocorrencia_id AND o.fiscal_registrou = auth.uid())));
+DROP POLICY IF EXISTS conta_os_historico ON public.os_historico;
+CREATE POLICY conta_os_historico ON public.os_historico AS RESTRICTIVE FOR SELECT TO authenticated
+USING (public.is_admin() OR (public.is_active_fiscal() AND EXISTS (
+ SELECT 1 FROM public.ordens_servico o WHERE o.id = os_id AND o.fiscal_abertura = auth.uid())));
+DROP POLICY IF EXISTS conta_notificacoes ON public.notificacoes;
+CREATE POLICY conta_notificacoes ON public.notificacoes AS RESTRICTIVE FOR SELECT TO authenticated
+USING (public.is_admin() OR (public.is_active_fiscal() AND fiscal_id = auth.uid() AND
+ (ocorrencia_id IS NULL OR EXISTS (SELECT 1 FROM public.ocorrencias o WHERE o.id = ocorrencia_id AND o.fiscal_registrou = auth.uid()))));
+
+DROP POLICY IF EXISTS conta_anexos ON public.anexos;
+CREATE POLICY conta_anexos ON public.anexos AS RESTRICTIVE FOR SELECT TO authenticated
+USING (public.is_admin() OR (public.is_active_fiscal() AND (fiscal_id = auth.uid()
+ OR (mensagem_id IS NOT NULL AND public.can_read_message_attachment(storage_path)))));
+DROP POLICY IF EXISTS conta_storage_ativo ON storage.objects;
+CREATE POLICY conta_storage_ativo ON storage.objects AS RESTRICTIVE FOR ALL TO authenticated
+USING (bucket_id <> 'sifau-anexos' OR public.is_admin() OR public.is_active_fiscal())
+WITH CHECK (bucket_id <> 'sifau-anexos' OR public.is_admin() OR public.is_active_fiscal());
+
+-- Nenhum novo trabalho pode ser atribuído pelo cliente. Os valores antigos ficam intactos.
+REVOKE INSERT (fiscal_designado) ON public.ordens_servico FROM authenticated;
+CREATE OR REPLACE FUNCTION public.assign_occurrence(p_occurrence_id uuid, p_target_fiscal_id uuid)
+RETURNS void LANGUAGE plpgsql SECURITY INVOKER SET search_path = '' AS $$
+BEGIN
+ RAISE EXCEPTION 'Atribuição de trabalho desativada. Cada conta utiliza seus próprios registros.' USING ERRCODE = '42501';
+END;
+$$;
+CREATE OR REPLACE FUNCTION public.redistribute_occurrence(p_occurrence_id uuid, p_target_fiscal_id uuid)
+RETURNS void LANGUAGE plpgsql SECURITY INVOKER SET search_path = '' AS $$
+BEGIN
+ RAISE EXCEPTION 'Redistribuição desativada nesta fase.' USING ERRCODE = '42501';
+END;
+$$;
+
+
+CREATE OR REPLACE FUNCTION public.complete_inspection(
+  p_vistoria_id uuid,
+  p_occurrence_id uuid,
+  p_fiscal_id uuid,
+  p_arrival_at timestamptz,
+  p_arrival_latitude numeric,
+  p_arrival_longitude numeric,
+  p_laudo text,
+  p_acao_tomada text,
+  p_valor_multa numeric,
+  p_numero_processo text,
+  p_fotos_depois text[],
+  p_status text,
+  p_note text
+)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = ''
+AS $$
+BEGIN
+  IF p_fiscal_id IS DISTINCT FROM auth.uid() THEN
+    RAISE EXCEPTION 'Fiscal da vistoria inválido' USING ERRCODE = '42501';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM public.ocorrencias AS assigned
+    WHERE assigned.id = p_occurrence_id
+      AND (public.is_admin() OR assigned.fiscal_registrou = auth.uid())
+      AND assigned.status IN ('Aberta', 'Triada', 'Atribuída', 'Em vistoria', 'Escalonada')
+  ) THEN
+    RAISE EXCEPTION 'A vistoria exige uma ocorrência sua, ainda não encerrada' USING ERRCODE = '42501';
+  END IF;
+  IF p_arrival_latitude NOT BETWEEN -90 AND 90
+     OR p_arrival_longitude NOT BETWEEN -180 AND 180 THEN
+    RAISE EXCEPTION 'Coordenadas de chegada inválidas' USING ERRCODE = '22023';
+  END IF;
+  IF pg_catalog.char_length(pg_catalog.btrim(COALESCE(p_laudo, ''))) < 10
+     OR pg_catalog.char_length(pg_catalog.btrim(COALESCE(p_laudo, ''))) > 10000
+     OR COALESCE(pg_catalog.cardinality(p_fotos_depois), 0) NOT BETWEEN 1 AND 5 THEN
+    RAISE EXCEPTION 'Laudo ou fotos da vistoria inválidos' USING ERRCODE = '22023';
+  END IF;
+  IF p_acao_tomada IS NULL OR p_acao_tomada NOT IN ('Notificação', 'Multa', 'Encaminhamento', 'Orientação', 'Sem ação') THEN
+    RAISE EXCEPTION 'Ação da vistoria inválida' USING ERRCODE = '22023';
+  END IF;
+  IF p_acao_tomada = 'Multa'
+     AND (p_valor_multa IS NULL OR p_valor_multa < 0 OR NULLIF(pg_catalog.btrim(p_numero_processo), '') IS NULL) THEN
+    RAISE EXCEPTION 'Multa exige valor não negativo e número de processo' USING ERRCODE = '22023';
+  END IF;
+  IF (p_acao_tomada = 'Encaminhamento') IS DISTINCT FROM (p_status = 'Escalonada') THEN
+    RAISE EXCEPTION 'O status final não corresponde à ação da vistoria' USING ERRCODE = '22023';
+  END IF;
+  IF p_status IS NULL OR p_status NOT IN ('Resolvida', 'Escalonada') THEN
+    RAISE EXCEPTION 'Status final inválido' USING ERRCODE = '22023';
+  END IF;
+
+  PERFORM pg_catalog.set_config('sifau.audit_note', pg_catalog.left(
+    COALESCE(NULLIF(pg_catalog.btrim(p_note), ''), 'Vistoria realizada'), 2000
+  ), true);
+  PERFORM pg_catalog.set_config('sifau.audit_latitude', p_arrival_latitude::text, true);
+  PERFORM pg_catalog.set_config('sifau.audit_longitude', p_arrival_longitude::text, true);
+
+  INSERT INTO public.vistorias (
+    id, ocorrencia_id, fiscal_id, chegada_at, chegada_latitude, chegada_longitude,
+    laudo, acao_tomada, valor_multa, numero_processo, fotos_depois
+  ) VALUES (
+    p_vistoria_id, p_occurrence_id, p_fiscal_id, p_arrival_at, p_arrival_latitude, p_arrival_longitude,
+    pg_catalog.btrim(p_laudo), p_acao_tomada,
+    CASE WHEN p_acao_tomada = 'Multa' THEN p_valor_multa ELSE NULL END,
+    CASE WHEN p_acao_tomada = 'Multa' THEN p_numero_processo ELSE NULL END,
+    COALESCE(p_fotos_depois, ARRAY[]::text[])
+  ) ON CONFLICT (id) DO NOTHING;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM public.vistorias AS existing
+    WHERE existing.id = p_vistoria_id
+      AND existing.ocorrencia_id = p_occurrence_id
+      AND existing.fiscal_id = p_fiscal_id
+  ) THEN
+    RAISE EXCEPTION 'Identificador de vistoria já utilizado por outro registro' USING ERRCODE = '23505';
+  END IF;
+
+  UPDATE public.ocorrencias SET status = p_status WHERE id = p_occurrence_id;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Ocorrência não encontrada ou sem permissão' USING ERRCODE = '42501';
+  END IF;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.document_relations_belong_to_user(
+  p_owner_id uuid,
+  p_occurrence_id uuid,
+  p_inspection_id uuid,
+  p_order_id uuid
+)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+  SELECT p_owner_id = auth.uid()
+    AND (
+      p_occurrence_id IS NULL
+      OR EXISTS (
+        SELECT 1 FROM public.ocorrencias AS o
+        WHERE o.id = p_occurrence_id
+          AND (o.fiscal_registrou = auth.uid())
+      )
+    )
+    AND (
+      p_inspection_id IS NULL
+      OR EXISTS (
+        SELECT 1 FROM public.vistorias AS v
+        WHERE v.id = p_inspection_id AND v.fiscal_id = auth.uid()
+      )
+    )
+    AND (
+      p_order_id IS NULL
+      OR EXISTS (
+        SELECT 1 FROM public.ordens_servico AS os
+        WHERE os.id = p_order_id
+          AND (os.fiscal_abertura = auth.uid())
+      )
+    );
+$$;
+
+CREATE OR REPLACE FUNCTION public.attachment_links_belong_to_user(
+  p_occurrence_id uuid,
+  p_inspection_id uuid,
+  p_order_id uuid,
+  p_fine_id uuid,
+  p_message_id uuid
+)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+  SELECT
+    (
+      p_occurrence_id IS NULL
+      OR EXISTS (
+        SELECT 1 FROM public.ocorrencias AS o
+        WHERE o.id = p_occurrence_id
+          AND (o.fiscal_registrou = auth.uid())
+      )
+    )
+    AND (
+      p_inspection_id IS NULL
+      OR EXISTS (
+        SELECT 1 FROM public.vistorias AS v
+        WHERE v.id = p_inspection_id AND v.fiscal_id = auth.uid()
+      )
+    )
+    AND (
+      p_order_id IS NULL
+      OR EXISTS (
+        SELECT 1 FROM public.ordens_servico AS os
+        WHERE os.id = p_order_id
+          AND (os.fiscal_abertura = auth.uid())
+      )
+    )
+    AND (
+      p_fine_id IS NULL
+      OR EXISTS (
+        SELECT 1 FROM public.autos_infracao AS a
+        WHERE a.id = p_fine_id
+          AND (
+            EXISTS (
+              SELECT 1 FROM public.ordens_servico AS os
+              WHERE os.id = a.os_id
+                AND (os.fiscal_abertura = auth.uid())
+            )
+            OR EXISTS (
+              SELECT 1 FROM public.ocorrencias AS o
+              WHERE a.os_id IS NULL AND o.id = a.ocorrencia_id
+                AND (o.fiscal_registrou = auth.uid())
+            )
+          )
+      )
+    )
+    AND (
+      p_message_id IS NULL
+      OR EXISTS (
+        SELECT 1 FROM public.admin_messages AS m
+        WHERE m.id = p_message_id
+          AND (
+            (m.sender_type = 'fiscal' AND m.fiscal_id = auth.uid())
+            OR (m.sender_type = 'admin' AND m.admin_id = auth.uid())
+          )
+      )
+    );
+$$;
+
+CREATE OR REPLACE FUNCTION public.salvar_etapa_os(
+  p_os_id uuid, p_versao integer, p_etapa text, p_dados jsonb DEFAULT '{}'
+) RETURNS public.ordens_servico
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE
+  o public.ordens_servico;
+  a public.autos_infracao;
+  ator uuid := auth.uid();
+  nome_fiscal text;
+  dados jsonb;
+  auto_id uuid;
+  ocorrencia uuid;
+  assinatura text;
+  lat double precision; lng double precision; precisao double precision; distancia double precision;
+BEGIN
+  IF ator IS NULL OR NOT (public.is_admin() OR public.is_active_fiscal()) THEN
+    RAISE EXCEPTION 'Acesso negado.' USING ERRCODE = '42501';
+  END IF;
+  SELECT * INTO o FROM public.ordens_servico WHERE id = p_os_id FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'OS não encontrada.' USING ERRCODE = 'P0002'; END IF;
+  IF NOT COALESCE((public.is_admin() OR o.fiscal_abertura = ator), false) THEN
+    RAISE EXCEPTION 'Esta OS não está vinculada a você.' USING ERRCODE = '42501';
+  END IF;
+  IF o.status = 'Cancelada' OR (o.status = 'Concluída' AND
+     (o.edicao_ate IS NULL OR now() >= o.edicao_ate)) THEN
+    RAISE EXCEPTION 'Prazo encerrado. A OS está disponível apenas para consulta.' USING ERRCODE = '42501';
+  END IF;
+  IF p_versao IS DISTINCT FROM o.versao THEN
+    RAISE EXCEPTION 'A OS foi atualizada em outro aparelho. Recarregue antes de salvar.' USING ERRCODE = '40001';
+  END IF;
+  IF p_dados IS NULL OR jsonb_typeof(p_dados) <> 'object' OR octet_length(p_dados::text) > 60000 THEN
+    RAISE EXCEPTION 'Dados inválidos ou muito extensos.' USING ERRCODE = '22023';
+  END IF;
+  SELECT nome INTO nome_fiscal FROM public.fiscais WHERE id = ator;
+  assinatura := NULLIF(p_dados->>'assinatura', '');
+  IF assinatura IS NOT NULL AND (
+    split_part(assinatura, '/', 1) <> ator::text OR
+    NOT EXISTS (SELECT 1 FROM public.anexos x WHERE x.storage_path = assinatura
+      AND x.fiscal_id = ator AND x.ordem_servico_id = o.id AND x.tipo = 'assinatura')
+  ) THEN RAISE EXCEPTION 'Assinatura inválida ou não vinculada à OS.'; END IF;
+
+  IF p_etapa = 'editar' THEN
+    ocorrencia := NULLIF(p_dados->>'ocorrencia_id', '')::uuid;
+    IF ocorrencia IS NOT NULL AND NOT EXISTS (
+      SELECT 1 FROM public.ocorrencias c WHERE c.id = ocorrencia
+      AND (public.is_admin() OR c.fiscal_registrou = ator)
+    ) THEN RAISE EXCEPTION 'Escolha uma denúncia registrada pela sua conta.'; END IF;
+    IF EXISTS (SELECT 1 FROM public.autos_infracao WHERE os_id = o.id)
+       AND ocorrencia IS DISTINCT FROM o.ocorrencia_id THEN
+      RAISE EXCEPTION 'A denúncia não pode mudar após a emissão de auto.';
+    END IF;
+    IF btrim(COALESCE(p_dados->>'descricao', '')) = '' OR
+       btrim(COALESCE(p_dados->>'endereco', '')) = '' OR
+       btrim(COALESCE(p_dados->>'requerente', '')) = '' THEN
+      RAISE EXCEPTION 'Preencha descrição, endereço e requerente.';
+    END IF;
+    o.descricao := btrim(p_dados->>'descricao');
+    o.endereco := btrim(p_dados->>'endereco');
+    o.requerente := btrim(p_dados->>'requerente');
+    o.ocorrencia_id := ocorrencia;
+  ELSIF p_etapa IN ('notificacao', 'embargo') THEN
+    IF btrim(COALESCE(p_dados->>'nome', '')) = '' OR
+       btrim(COALESCE(p_dados->>'texto', '')) = '' OR
+       btrim(COALESCE(p_dados->>'endereco', '')) = '' THEN
+      RAISE EXCEPTION 'Informe responsável, endereço e descrição do documento.';
+    END IF;
+    IF p_etapa = 'embargo' AND NOT EXISTS (SELECT 1 FROM public.autos_infracao WHERE os_id = o.id) THEN
+      RAISE EXCEPTION 'Registre o auto antes de emitir um embargo.';
+    END IF;
+    IF p_etapa = 'embargo' AND btrim(COALESCE(p_dados->>'fundamento', '')) = '' THEN
+      RAISE EXCEPTION 'Informe o fundamento legal do embargo.';
+    END IF;
+    dados := jsonb_build_object('nome', btrim(p_dados->>'nome'),
+      'documento', COALESCE(p_dados->>'documento', ''), 'endereco', btrim(p_dados->>'endereco'),
+      'texto', btrim(p_dados->>'texto'), 'fundamento', COALESCE(p_dados->>'fundamento', ''),
+      'ciencia', COALESCE(p_dados->>'ciencia', 'Não registrada'),
+      'assinatura', assinatura, 'fiscal_nome', nome_fiscal, 'fiscal_id', ator,
+      'registrado_em', COALESCE(o.fluxo->p_etapa->>'registrado_em', now()::text),
+      'atualizado_em', now());
+    IF dados->>'ciencia' NOT IN ('Assinou', 'Recusou', 'Ausente', 'Não registrada') THEN
+      RAISE EXCEPTION 'Ciência inválida.';
+    END IF;
+    IF dados->>'ciencia' = 'Assinou' AND assinatura IS NULL THEN
+      RAISE EXCEPTION 'Capture a assinatura ou altere a ciência.';
+    END IF;
+    o.fluxo := jsonb_set(o.fluxo, ARRAY[p_etapa], dados);
+  ELSIF p_etapa = 'auto' THEN
+    IF o.fluxo->'notificacao' IS NULL OR o.ocorrencia_id IS NULL THEN
+      RAISE EXCEPTION 'Vincule uma denúncia e registre a notificação antes do auto.';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM public.ocorrencias c WHERE c.id = o.ocorrencia_id
+      AND (public.is_admin() OR c.fiscal_registrou = ator)) THEN
+      RAISE EXCEPTION 'A denúncia não está vinculada a você.' USING ERRCODE = '42501';
+    END IF;
+    IF btrim(COALESCE(p_dados->>'autuado_nome', '')) = '' OR
+       btrim(COALESCE(p_dados->>'autuado_documento', '')) = '' OR
+       btrim(COALESCE(p_dados->>'artigo_legal', '')) = '' OR
+       btrim(COALESCE(p_dados->>'tipo_infracao', '')) = '' OR
+       btrim(COALESCE(p_dados->>'motivo', '')) = '' THEN
+      RAISE EXCEPTION 'Preencha autuado, documento, infração, motivo e fundamento legal.';
+    END IF;
+    IF p_dados->>'ciencia' = 'Assinou' AND assinatura IS NULL THEN
+      RAISE EXCEPTION 'Capture a assinatura ou altere a ciência.';
+    END IF;
+    auto_id := NULLIF(o.fluxo->>'auto_id', '')::uuid;
+    IF auto_id IS NULL THEN
+      INSERT INTO public.autos_infracao(os_id, ocorrencia_id, tipo_infracao, artigo_legal,
+        valor_base, valor_multa, motivo, autuado_nome, autuado_documento,
+        ciencia, assinatura_autuado, testemunha_nome, vencimento)
+      VALUES (o.id, o.ocorrencia_id, p_dados->>'tipo_infracao', p_dados->>'artigo_legal',
+        (p_dados->>'valor_base')::numeric, (p_dados->>'valor_multa')::numeric,
+        p_dados->>'motivo', p_dados->>'autuado_nome', p_dados->>'autuado_documento',
+        p_dados->>'ciencia', assinatura, NULLIF(p_dados->>'testemunha_nome', ''),
+        (p_dados->>'vencimento')::date) RETURNING * INTO a;
+    ELSE
+      UPDATE public.autos_infracao SET tipo_infracao = p_dados->>'tipo_infracao',
+        artigo_legal = p_dados->>'artigo_legal', valor_base = (p_dados->>'valor_base')::numeric,
+        valor_multa = (p_dados->>'valor_multa')::numeric, motivo = p_dados->>'motivo',
+        autuado_nome = p_dados->>'autuado_nome', autuado_documento = p_dados->>'autuado_documento',
+        ciencia = p_dados->>'ciencia', assinatura_autuado = assinatura,
+        testemunha_nome = NULLIF(p_dados->>'testemunha_nome', ''), vencimento = (p_dados->>'vencimento')::date
+      WHERE id = auto_id AND os_id = o.id RETURNING * INTO a;
+      IF NOT FOUND THEN RAISE EXCEPTION 'Auto vinculado não encontrado.'; END IF;
+    END IF;
+    o.fluxo := o.fluxo || jsonb_build_object('auto_id', a.id,
+      'auto', to_jsonb(a) || jsonb_build_object('fiscal_nome', nome_fiscal,
+        'fiscal_id', ator, 'endereco', o.endereco, 'atualizado_em', now()));
+  ELSIF p_etapa = 'concluir' THEN
+    IF btrim(COALESCE(p_dados->>'texto', '')) = '' THEN
+      RAISE EXCEPTION 'Registre o resultado, inclusive quando não houver auto ou embargo.';
+    END IF;
+    o.status := 'Concluída';
+    IF o.concluida_em IS NULL THEN
+      o.concluida_em := now();
+      o.edicao_ate := now() + interval '48 hours';
+    END IF;
+    o.fluxo := o.fluxo || jsonb_build_object('conclusao', jsonb_build_object(
+      'texto', p_dados->>'texto', 'assinatura', assinatura, 'fiscal_nome', nome_fiscal,
+      'fiscal_id', ator, 'registrado_em', o.concluida_em, 'atualizado_em', now()));
+  ELSIF p_etapa = 'iniciar' THEN
+    IF o.status <> 'Aberta' THEN RAISE EXCEPTION 'OS não está aberta.'; END IF;
+    lat := (p_dados->>'latitude')::double precision;
+    lng := (p_dados->>'longitude')::double precision;
+    precisao := (p_dados->>'precisao')::double precision;
+    IF (lat BETWEEN -90 AND 90 AND lng BETWEEN -180 AND 180 AND precisao BETWEEN 0 AND 100) IS NOT TRUE
+       OR o.latitude IS NULL OR o.longitude IS NULL THEN
+      RAISE EXCEPTION 'Capture uma localização válida com precisão para validar a proximidade.';
+    END IF;
+    distancia := 12742000 * asin(sqrt(least(1.0,
+      power(sin(radians((o.latitude::double precision - lat) / 2)), 2) +
+      cos(radians(lat)) * cos(radians(o.latitude::double precision)) *
+      power(sin(radians((o.longitude::double precision - lng) / 2)), 2))));
+    IF distancia + precisao > 100 THEN RAISE EXCEPTION 'A vistoria exige distância e margem de erro de até 100m.'; END IF;
+    o.status := 'Em vistoria';
+  ELSE
+    RAISE EXCEPTION 'Etapa inválida.' USING ERRCODE = '22023';
+  END IF;
+
+  UPDATE public.ordens_servico SET fluxo = o.fluxo, versao = versao + 1,
+    status = o.status, concluida_em = o.concluida_em, edicao_ate = o.edicao_ate,
+    descricao = o.descricao, endereco = o.endereco, requerente = o.requerente,
+    ocorrencia_id = o.ocorrencia_id WHERE id = o.id RETURNING * INTO o;
+  INSERT INTO public.os_historico(os_id, fiscal_id, etapa, versao, dados)
+    VALUES (o.id, ator, p_etapa, o.versao, to_jsonb(o));
+  RETURN o;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.registrar_criacao_os() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+BEGIN
+  IF NEW.ocorrencia_id IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM public.ocorrencias c WHERE c.id = NEW.ocorrencia_id
+    AND (public.is_admin() OR c.fiscal_registrou = auth.uid())
+  ) THEN RAISE EXCEPTION 'Escolha uma denúncia registrada pela sua conta.'; END IF;
+  INSERT INTO public.os_historico(os_id, fiscal_id, etapa, versao, dados)
+    VALUES (NEW.id, NEW.fiscal_abertura, 'criacao', 0, to_jsonb(NEW));
+  RETURN NEW;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.decidir_auto_os(
+  p_os_id uuid, p_versao integer, p_emitir boolean, p_justificativa text DEFAULT ''
+) RETURNS public.ordens_servico
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE o public.ordens_servico; ator uuid := auth.uid(); nome text;
+BEGIN
+  IF ator IS NULL OR NOT (public.is_admin() OR public.is_active_fiscal()) THEN
+    RAISE EXCEPTION 'Acesso negado.' USING ERRCODE = '42501';
+  END IF;
+  SELECT * INTO o FROM public.ordens_servico WHERE id = p_os_id FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'OS não encontrada.' USING ERRCODE = 'P0002'; END IF;
+  IF NOT COALESCE(public.is_admin() OR o.fiscal_abertura = ator, false) THEN
+    RAISE EXCEPTION 'Esta OS não está vinculada a você.' USING ERRCODE = '42501';
+  END IF;
+  IF o.status = 'Cancelada' OR (o.status = 'Concluída' AND (o.edicao_ate IS NULL OR now() >= o.edicao_ate)) THEN
+    RAISE EXCEPTION 'OS encerrada definitivamente; apenas consulta.' USING ERRCODE = '42501';
+  END IF;
+  IF p_versao IS DISTINCT FROM o.versao THEN
+    RAISE EXCEPTION 'A OS foi atualizada. Recarregue antes de decidir.' USING ERRCODE = '40001';
+  END IF;
+  IF p_emitir IS NULL THEN RAISE EXCEPTION 'Escolha emitir ou não emitir o auto.'; END IF;
+  IF EXISTS (SELECT 1 FROM public.autos_infracao WHERE os_id = o.id) THEN
+    RAISE EXCEPTION 'Já existe um auto. A decisão não pode apagar ou cancelar um auto emitido.';
+  END IF;
+  IF NOT p_emitir AND char_length(btrim(COALESCE(p_justificativa, ''))) < 10 THEN
+    RAISE EXCEPTION 'Explique a decisão de não emitir o auto (mínimo de 10 caracteres).';
+  END IF;
+  IF char_length(COALESCE(p_justificativa, '')) > 2000 THEN RAISE EXCEPTION 'Justificativa muito longa.'; END IF;
+  SELECT f.nome INTO nome FROM public.fiscais f WHERE f.id = ator;
+  UPDATE public.ordens_servico SET versao = versao + 1,
+    fluxo = fluxo || jsonb_build_object('decisao_auto', jsonb_build_object(
+      'decisao', CASE WHEN p_emitir THEN 'emitir' ELSE 'nao_emitir' END,
+      'justificativa', btrim(COALESCE(p_justificativa, '')), 'fiscal_id', ator,
+      'fiscal_nome', nome, 'registrado_em', now()))
+    WHERE id = o.id RETURNING * INTO o;
+  INSERT INTO public.os_historico(os_id, fiscal_id, etapa, versao, dados)
+    VALUES (o.id, ator, 'decisao_auto', o.versao, to_jsonb(o));
+  RETURN o;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.notify_upcoming_sla()
+RETURNS integer
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+DECLARE
+  inserted_count integer;
+BEGIN
+  INSERT INTO public.notificacoes (fiscal_id, ocorrencia_id, tipo, titulo, mensagem)
+  SELECT
+    o.fiscal_registrou,
+    o.id,
+    'sla',
+    'Prazo de SLA próximo',
+    'A ocorrência "' || o.categoria || '" em ' || o.bairro || ' vence em até 24 horas.'
+  FROM public.ocorrencias AS o
+  JOIN public.fiscais AS f ON f.id = o.fiscal_registrou
+  WHERE f.notif_sla = true
+    AND public.is_eligible_fiscal(o.fiscal_registrou)
+    AND o.fiscal_registrou IS NOT NULL
+    AND o.sla_deadline > now()
+    AND o.sla_deadline <= now() + interval '24 hours'
+    AND o.status NOT IN ('Resolvida', 'Arquivada')
+    AND NOT EXISTS (
+      SELECT 1 FROM public.notificacoes AS n
+      WHERE n.fiscal_id = o.fiscal_registrou
+        AND n.ocorrencia_id = o.id
+        AND n.tipo = 'sla'
+    );
+  GET DIAGNOSTICS inserted_count = ROW_COUNT;
+  RETURN inserted_count;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.account_isolation_ready() RETURNS boolean
+LANGUAGE sql STABLE SECURITY INVOKER SET search_path = '' AS $$ SELECT true; $$;
+REVOKE ALL ON FUNCTION public.account_isolation_ready() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.account_isolation_ready() TO authenticated;
+
+COMMIT;

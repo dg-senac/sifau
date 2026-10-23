@@ -1,6 +1,6 @@
 import { FormEvent, lazy, useCallback, useEffect, useState } from 'react';
 import {
-  AlertTriangle, CheckCircle2, ChevronRight, ClipboardList, Clock3,
+  AlertTriangle, RefreshCw, ChevronRight, ClipboardList, Clock3,
   Loader2, MapPin, Navigation, X,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
@@ -16,8 +16,7 @@ export function Inspection({ fiscal }: { fiscal: Fiscal | null }) {
   const [items, setItems] = useState<Occurrence[]>([]);
   const [loading, setLoading] = useState(true);
   const [active, setActive] = useState<Occurrence | null>(null);
-  const [fiscais, setFiscais] = useState<Fiscal[]>([]);
-  const [showRedistribute, setShowRedistribute] = useState<Occurrence | null>(null);
+  const [erro, setErro] = useState('');
   const [autoFor, setAutoFor] = useState<{ item: Occurrence; valorMulta: number; numeroProcesso: string } | null>(null);
 
   const fiscalId = fiscal?.id;
@@ -27,28 +26,18 @@ export function Inspection({ fiscal }: { fiscal: Fiscal | null }) {
       setLoading(false);
       return;
     }
-    setLoading(true);
+    setLoading(true); setErro('');
     const { data, error } = await supabase
       .from('ocorrencias').select(OCCURRENCE_COLUMNS)
-      .eq('fiscal_designado', fiscalId)
-      .in('status', ['Atribuída', 'Em vistoria'])
+      .eq('fiscal_registrou', fiscalId)
+      .not('status', 'in', '(Resolvida,Arquivada)')
       .order('sla_deadline');
-    if (error) console.error('Erro ao carregar a fila de vistorias:', error.message);
+    if (error) setErro('Não foi possível carregar suas vistorias. Verifique a conexão e a atualização de privacidade do banco.');
     setItems(data ?? []);
     setLoading(false);
   }, [fiscalId]);
 
   useEffect(() => { void load(); }, [load]);
-
-  const loadFiscais = async () => {
-    const { data, error } = await supabase.rpc('get_fiscal_directory');
-    if (error) {
-      console.error('Erro ao carregar a equipe:', error.message);
-      setFiscais([]);
-      return;
-    }
-    setFiscais(((data ?? []) as Fiscal[]).filter((member) => member.ativo && member.id !== fiscal?.id));
-  };
 
   if (autoFor) {
     return (
@@ -76,30 +65,19 @@ export function Inspection({ fiscal }: { fiscal: Fiscal | null }) {
     );
   }
 
-  if (showRedistribute) {
-    return (
-      <RedistributeScreen
-        item={showRedistribute}
-        fiscais={fiscais}
-        onClose={() => setShowRedistribute(null)}
-        onRedistributed={() => { setShowRedistribute(null); load(); }}
-      />
-    );
-  }
-
   return (
     <>
       <PageTitle eyebrow="Operação" title="Minha fila de vistorias"
-        action={<span className="sync-pill"><CheckCircle2 size={14} /> Sincronizado</span>} />
+        action={<button className="icon-button light" disabled={loading} aria-label="Atualizar minhas vistorias" onClick={() => void load()}><RefreshCw size={18} /></button>} />
       <NoticeCard
         icon={<Navigation size={19} />}
-        title="Casos atribuídos pela coordenação"
-        text="As ocorrências designadas a você aparecem nesta fila; a administração faz a triagem e distribuição."
+        title="Vistorias dos seus registros"
+        text="Suas ocorrências ainda não encerradas aparecem aqui. Não é necessário receber uma atribuição para iniciar a vistoria."
       />
-      {loading ? (
+      {erro ? <p className="form-message" role="alert">{erro}</p> : loading ? (
         <SkeletonList linhas={3} label="Carregando fila de vistorias" />
       ) : items.length === 0 ? (
-        <EmptyState icon={<ClipboardList size={28} />} title="Fila limpa" message="Você não tem vistorias atribuídas no momento." />
+        <EmptyState icon={<ClipboardList size={28} />} title="Fila limpa" message="Você não tem ocorrências próprias pendentes de vistoria. Registre uma ocorrência no Início." />
       ) : (
         <div className="inspection-list">
           {items.map((item) => (
@@ -117,52 +95,8 @@ export function Inspection({ fiscal }: { fiscal: Fiscal | null }) {
                 <button className="primary-button small" onClick={() => setActive(item)}>
                   Iniciar <ChevronRight size={16} />
                 </button>
-                <button className="ghost-button small" onClick={() => { loadFiscais(); setShowRedistribute(item); }}>
-                  Redistribuir
-                </button>
+
               </div>
-            </article>
-          ))}
-        </div>
-      )}
-    </>
-  );
-}
-
-function RedistributeScreen({
-  item, fiscais, onClose, onRedistributed,
-}: {
-  item: Occurrence; fiscais: Fiscal[];
-  onClose: () => void; onRedistributed: () => void;
-}) {
-  const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState('');
-
-  const redistribute = async (targetId: string) => {
-    setBusy(true);
-    const { error } = await supabase.rpc('redistribute_occurrence', {
-      p_occurrence_id: item.id,
-      p_target_fiscal_id: targetId,
-    });
-    if (error) { setMessage('Não foi possível redistribuir.'); setBusy(false); return; }
-    onRedistributed();
-  };
-
-  return (
-    <>
-      <PageTitle eyebrow="Redistribuir" title="Transferir vistoria"
-        action={<button className="icon-button light" onClick={onClose}><X size={20} /></button>} />
-      <NoticeCard icon={<MapPin size={19} />} title={item.categoria} text={item.endereco} />
-      {message && <div className="form-message"><AlertTriangle size={16} />{message}</div>}
-      {fiscais.length === 0 ? (
-        <EmptyState icon={<ClipboardList size={28} />} title="Sem fiscais disponíveis" message="Não há outros fiscais ativos." />
-      ) : (
-        <div className="user-list">
-          {fiscais.map((f) => (
-            <article className="user-card" key={f.id}>
-              <div className="avatar">{f.nome.charAt(0)}</div>
-              <div className="user-info"><b>{f.nome}</b><span>{f.bairro}</span></div>
-              <button className="primary-button small" disabled={busy} onClick={() => redistribute(f.id)}>Atribuir</button>
             </article>
           ))}
         </div>

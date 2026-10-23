@@ -20,6 +20,7 @@ export function HomeScreen({
   const [categoria, setCategoria] = useState('Todas');
   const [bairro, setBairro] = useState('Todos');
   const [loading, setLoading] = useState(true);
+  const [totalProprias, setTotalProprias] = useState(0);
   const [resolvedCount, setResolvedCount] = useState(0);
   const [compliance, setCompliance] = useState(0);
   const [showFilters, setShowFilters] = useState(false);
@@ -40,10 +41,11 @@ export function HomeScreen({
     if (fiscalId) {
       const { count: resolved } = await supabase
         .from('ocorrencias').select('id', { count: 'exact', head: true })
-        .eq('fiscal_designado', fiscalId).eq('status', 'Resolvida');
+        .eq('fiscal_registrou', fiscalId).eq('status', 'Resolvida');
       const { count: totalAssigned } = await supabase
         .from('ocorrencias').select('id', { count: 'exact', head: true })
-        .eq('fiscal_designado', fiscalId);
+        .eq('fiscal_registrou', fiscalId);
+      setTotalProprias(totalAssigned ?? 0);
       setResolvedCount(resolved ?? 0);
       setCompliance(totalAssigned ? Math.round(((resolved ?? 0) / totalAssigned) * 100) : 0);
     }
@@ -51,7 +53,6 @@ export function HomeScreen({
 
   useEffect(() => { void load(); }, [load]);
 
-  const assigned = items.filter((item) => item.fiscal_designado === fiscal?.id).length;
   const bairros = [...new Set(items.map((i) => i.bairro))];
 
   if (detail) {
@@ -78,9 +79,9 @@ export function HomeScreen({
       />
       <section className="personal-summary">
         <div>
-          <span>Minha fila</span>
-          <b>{assigned}</b>
-          <small>atribuídas</small>
+          <span>Meus registros</span>
+          <b>{totalProprias}</b>
+          <small>ocorrências</small>
         </div>
         <div>
           <span>Resolvidas</span>
@@ -90,7 +91,7 @@ export function HomeScreen({
         <div>
           <span>Concluídas</span>
           <b>{compliance}%</b>
-          <small>das atribuídas</small>
+          <small>dos meus registros</small>
         </div>
       </section>
       <button className="activity-shortcut" onClick={() => onNavigate('dashboard')}>

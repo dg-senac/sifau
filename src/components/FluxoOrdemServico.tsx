@@ -10,8 +10,8 @@ const titulos: Record<EtapaOS | 'criacao' | 'migracao' | 'decisao_auto', string>
   notificacao: 'Notificação', auto: 'Auto de infração', embargo: 'Termo de embargo', concluir: 'Concluir OS' };
 const dataHora = (valor: string) => new Date(valor).toLocaleString('pt-BR');
 
-export function FluxoOrdemServico({ ordem, fiscal, onChange }: {
-  ordem: OrdemComFluxo; fiscal: Fiscal | null; onChange: (ordem: OrdemComFluxo) => void;
+export function FluxoOrdemServico({ ordem, fiscal, onChange, isAdmin = false }: {
+  ordem: OrdemComFluxo; fiscal: Fiscal | null; isAdmin?: boolean; onChange: (ordem: OrdemComFluxo) => void;
 }) {
   const [etapa, setEtapa] = useState<EtapaOS | null>(null);
   const [semAuto, setSemAuto] = useState(false);
@@ -25,7 +25,7 @@ export function FluxoOrdemServico({ ordem, fiscal, onChange }: {
     return () => window.clearInterval(timer); }, []);
   const bloqueada = osBloqueada(ordem, agora);
   const podeEditar = !bloqueada && !!fiscal &&
-    (ordem.fiscal_abertura === fiscal.id || ordem.fiscal_designado === fiscal.id);
+    (isAdmin || ordem.fiscal_abertura === fiscal.id);
   const carregarHistorico = useCallback(async () => {
     setErroHistorico(false);
     const { data, error } = await supabase.from('os_historico')
@@ -91,7 +91,7 @@ export function FluxoOrdemServico({ ordem, fiscal, onChange }: {
             <button className="outline-button" onClick={() => setSemAuto(true)}>Não emitir auto</button>
             {!ordem.fluxo.notificacao && <p>Para emitir, registre primeiro a notificação.</p>}
           </div>}
-        {!ordem.ocorrencia_id && <p className="muted">Para emitir um auto, vincule uma denúncia registrada por você ou designada a você.</p>}
+        {!ordem.ocorrencia_id && <p className="muted">Para emitir um auto, vincule uma denúncia registrada pela sua conta.</p>}
         <button className="outline-button" disabled={!ordem.fluxo.auto_id} onClick={() => setEtapa('embargo')}>
           {ordem.fluxo.embargo ? 'Corrigir embargo' : 'Registrar embargo (se aplicável)'}</button>
         <button className="primary-button" onClick={() => setEtapa('concluir')}>{ordem.concluida_em ? 'Corrigir conclusão' : 'Concluir OS — com ou sem auto'}</button>
@@ -101,7 +101,7 @@ export function FluxoOrdemServico({ ordem, fiscal, onChange }: {
       onChange(salva); setSemAuto(false); setMensagem('Decisão de não emitir registrada. A OS continua no mesmo estado; conclua quando terminar.');
     }} />}
     {etapa && fiscal && <FormularioEtapa key={`${ordem.id}-${etapa}-${ordem.versao}`} ordem={ordem} fiscal={fiscal}
-      etapa={etapa} bloqueada={bloqueada} onCancel={() => setEtapa(null)}
+      etapa={etapa} bloqueada={bloqueada} isAdmin={isAdmin} onCancel={() => setEtapa(null)}
       onSave={(salva) => { onChange(salva); setEtapa(null); setMensagem('Etapa salva no sistema e registrada no histórico.'); }} />}
     {ordem.fluxo.decisao_auto && <article className="form-card compact">
       <b>Decisão registrada sobre o auto</b>
@@ -140,8 +140,8 @@ export function FluxoOrdemServico({ ordem, fiscal, onChange }: {
   </section>;
 }
 
-function FormularioEtapa({ ordem, fiscal, etapa, bloqueada, onCancel, onSave }: {
-  ordem: OrdemComFluxo; fiscal: Fiscal; etapa: EtapaOS; bloqueada: boolean;
+function FormularioEtapa({ ordem, fiscal, etapa, bloqueada, onCancel, onSave, isAdmin }: {
+  ordem: OrdemComFluxo; fiscal: Fiscal; etapa: EtapaOS; bloqueada: boolean; isAdmin: boolean;
   onCancel: () => void; onSave: (ordem: OrdemComFluxo) => void;
 }) {
   const original = etapa === 'editar' ? { requerente: ordem.requerente, descricao: ordem.descricao,
@@ -164,11 +164,12 @@ function FormularioEtapa({ ordem, fiscal, etapa, bloqueada, onCancel, onSave }: 
   const salvandoRef = useRef(false);
   const carregarDenuncias = useCallback(async () => {
     setErroDenuncias(false);
-    const { data, error } = await supabase.from('ocorrencias').select(OCCURRENCE_COLUMNS)
-      .or(`fiscal_registrou.eq.${fiscal.id},fiscal_designado.eq.${fiscal.id}`).order('created_at', { ascending: false });
+    let query = supabase.from('ocorrencias').select(OCCURRENCE_COLUMNS).order('created_at', { ascending: false });
+    if (!isAdmin) query = query.eq('fiscal_registrou', fiscal.id);
+    const { data, error } = await query;
     if (error) { setErroDenuncias(true); return; }
     setDenuncias((data ?? []) as Occurrence[]);
-  }, [fiscal.id]);
+  }, [fiscal.id, isAdmin]);
   useEffect(() => { if (etapa === 'editar') void carregarDenuncias(); }, [etapa, carregarDenuncias]);
   function campo(nome: string, titulo: string, tipo = 'text', obrigatorio = true) {
     return <label key={nome}>{titulo}{tipo === 'textarea' ?

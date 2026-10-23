@@ -115,11 +115,8 @@ export default {
       t.eq(simples.status, 'Concluída');
       t.ok(!simples.fluxo.auto_id && !simples.fluxo.embargo);
     });
-    await t.test('denúncia designada ao fiscal também pode originar o auto', async () => {
-      let atribuida = await criar(designada);
-      atribuida = await salvar(atribuida, 'notificacao', notificacao);
-      atribuida = await salvar(atribuida, 'auto', auto);
-      t.eq(atribuida.fluxo.auto.ocorrencia_id, designada);
+    await t.test('designação legada não autoriza vincular denúncia de outra conta à OS', async () => {
+      await t.denies(() => criar(designada));
     });
     await t.test('cliente não contorna o fluxo atualizando status ou inserindo auto diretamente', async () => {
       const aberta = await criar(propria);
